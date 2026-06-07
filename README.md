@@ -19,7 +19,7 @@
 
 ### 1. 部署反作弊插件
 
-```bash
+
 # 编译
 cd AntiCheatAI
 mvn -pl anticheat-plugin clean package
@@ -29,7 +29,7 @@ cp anticheat-plugin/target/AntiCheat.jar <服务器目录>/plugins/
 mkdir <服务器目录>/plugins/AntiCheat
 cp models/scaffold_detector.onnx <服务器目录>/plugins/AntiCheat/
 # 重启服务器
-'''
+
 
 ---
 
