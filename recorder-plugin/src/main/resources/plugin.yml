@@ -1,0 +1,13 @@
+name: BehaviorRecorder
+version: 1.0
+main: com.example.recorder.BehaviorRecorderPlugin
+api-version: '1.21'
+description: 行为录制插件，用于训练反作弊AI
+commands:
+  record:
+    description: 控制行为录制
+    usage: /record <normal|cheat|stop>
+    permission: recorder.admin
+permissions:
+  recorder.admin:
+    default: op

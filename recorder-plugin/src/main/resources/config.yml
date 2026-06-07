@@ -1,0 +1,8 @@
+# 是否自动录制所有玩家（标签 0）
+auto-record: true
+
+# 数据保存目录（相对于插件文件夹）
+save-dir: "recordings"
+
+# 每个文件包含的 tick 数（达到后自动保存并清空缓冲区）
+buffer-size: 256
