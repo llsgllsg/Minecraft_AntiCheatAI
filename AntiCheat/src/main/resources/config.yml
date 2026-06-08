@@ -1,0 +1,17 @@
+# 踢出命令（支持 %player% 和 %code%）
+punish-command: "kick %player% §c[AntiCheat] 检测到异常行为 [封禁码: %code%]"
+# 封禁命令（支持 %player% 和 %code%）
+ban-command: "ban %player% §c[AntiCheat] 多次作弊行为 [封禁码: %code%]"
+
+movement:
+  fly: true
+  boat-speed: true
+  max-boat-speed: 12.0
+
+
+ai:
+  enabled: true
+  model-path: "scaffold_detector.onnx"
+  auto-punish-threshold: 0.85
+  alert-threshold: 0.5  # 0.1~0.9  越低封禁力度越高，误封概率越高
+  analysis-seconds: 30
