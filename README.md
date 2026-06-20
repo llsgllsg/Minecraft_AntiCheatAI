@@ -1,3 +1,5 @@
+###(注意 本项目部分由Deepseek编写代码)
+
 # AntiCheatAI
 
 基于 **CNN 行为序列分析** 的 Minecraft 反作弊插件，专为 **Paper 1.21.1** 设计。  
