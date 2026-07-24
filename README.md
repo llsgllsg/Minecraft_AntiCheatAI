@@ -1,4 +1,3 @@
-###(注意 本项目部分由Deepseek编写代码)
 
 # AntiCheatAI
 
