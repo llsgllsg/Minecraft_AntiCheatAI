@@ -1,18 +1,19 @@
-name: AntiCheat
+name: DeepGuard
 version: 1.0
 main: com.gfish.anticheat.AntiCheatPlugin
 api-version: '1.21'
 author: Gfish
 description: AI-powered anti-cheat with basic movement checks
+softdepend: [PlaceholderAPI, Floodgate]
 commands:
   anticheat:
-    description: AntiCheat admin commands
+    description: DeepGuard admin commands
     aliases: [ac]
-    permission: anticheat.admin
+    permission: deepguard.admin
 permissions:
-  anticheat.admin:
+  deepguard.admin:
     default: op
-
-# 让 Paper 自动下载 ONNX Runtime 及其原生库
+  deepguard.bypass:
+    default: false
 libraries:
   - "com.microsoft.onnxruntime:onnxruntime:1.17.1"
