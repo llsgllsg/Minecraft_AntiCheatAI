@@ -1,17 +1,26 @@
-# 踢出命令（支持 %player% 和 %code%）
-punish-command: "kick %player% §c[AntiCheat] 检测到异常行为 [封禁码: %code%]"
-# 封禁命令（支持 %player% 和 %code%）
-ban-command: "ban %player% §c[AntiCheat] 多次作弊行为 [封禁码: %code%]"
+# 处罚命令
+punish-command: "kick %player% §c[DeepGuard] 检测到异常行为 [封禁码: %code%]"
+ban-command: "ban %player% §c[DeepGuard] 多次作弊行为 [封禁码: %code%]"
+
+# Geyser 玩家豁免
+geyser-bypass:
+  enabled: true
+  # 识别方式：uuid-version（UUID版本，默认） 或 floodgate（需安装Floodgate）
+  method: "uuid-version"
 
 movement:
   fly: true
   boat-speed: true
   max-boat-speed: 12.0
-
+  speed:
+    enabled: true
+    max-speed: 5.0
+    ap-placeholder: "%ap_moving:max%"
+    command: "kick %player% §c你移动速度过快！"
 
 ai:
   enabled: true
   model-path: "scaffold_detector.onnx"
   auto-punish-threshold: 0.85
-  alert-threshold: 0.5  # 0.1~0.9  越低封禁力度越高，误封概率越高
+  alert-threshold: 0.5
   analysis-seconds: 30
