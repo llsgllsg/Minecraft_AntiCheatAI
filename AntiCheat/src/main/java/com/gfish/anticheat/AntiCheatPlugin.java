@@ -16,7 +16,6 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
-import org.geysermc.floodgate.api.FloodgateApi;
 
 import java.io.BufferedWriter;
 import java.io.File;
@@ -43,11 +42,7 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
     private String apPlaceholder, speedPunishCommand;
     private File violationsFolder;
     private boolean papiEnabled = false;
-
-    // Geyser 豁免
     private boolean geyserBypassEnabled;
-    private String geyserBypassMethod;
-    private FloodgateApi floodgateApi = null;
 
     private static final long VIOLATION_WINDOW_MS = 5 * 60 * 1000;
     private static final int MAX_KICKS = 3;
@@ -57,7 +52,6 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
         saveDefaultConfig();
         loadConfigValues();
 
-        // PlaceholderAPI
         if (Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI")) {
             papiEnabled = true;
             getLogger().info("PlaceholderAPI 已挂接，速度检测将动态计算属性加成。");
@@ -65,26 +59,12 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
             getLogger().warning("PlaceholderAPI 未安装，属性加成将始终为 0。");
         }
 
-        // Floodgate API
-        if (geyserBypassEnabled && "floodgate".equalsIgnoreCase(geyserBypassMethod)) {
-            try {
-                floodgateApi = FloodgateApi.getInstance();
-                getLogger().info("Floodgate API 已连接，Geyser玩家将使用Floodgate识别。");
-            } catch (NoClassDefFoundError | Exception e) {
-                getLogger().warning("无法加载 Floodgate API，将回退到 UUID 版本检测方式。");
-                geyserBypassMethod = "uuid-version";
-            }
-        }
-
         violationsFolder = new File(getDataFolder(), "violations");
-        if (!violationsFolder.exists()) {
-            violationsFolder.mkdirs();
-        }
+        if (!violationsFolder.exists()) violationsFolder.mkdirs();
 
         if (aiEnabled) {
             aiEngine = new AIInferenceEngine();
-            File modelFile = new File(getDataFolder(),
-                    getConfig().getString("ai.model-path", "scaffold_detector.onnx"));
+            File modelFile = new File(getDataFolder(), getConfig().getString("ai.model-path", "scaffold_detector.onnx"));
             if (modelFile.exists()) {
                 if (aiEngine.loadModel(modelFile.getAbsolutePath())) {
                     getLogger().info("AI 模型加载成功");
@@ -98,7 +78,7 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
 
         getServer().getPluginManager().registerEvents(this, this);
 
-        // 每 tick 记录行为数据
+        // 每 tick 记录行为
         new BukkitRunnable() {
             @Override
             public void run() {
@@ -159,20 +139,14 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
         speedPunishCommand = getConfig().getString("movement.speed.command", "kick %player% §c你移动速度过快！");
 
         geyserBypassEnabled = getConfig().getBoolean("geyser-bypass.enabled", true);
-        geyserBypassMethod = getConfig().getString("geyser-bypass.method", "uuid-version");
     }
 
     /**
-     * 判断玩家是否豁免（Geyser 基岩版玩家）
+     * 判断玩家是否豁免（Geyser 基岩版玩家），通过 UUID 版本检测
      */
     private boolean isExempted(Player player) {
         if (!geyserBypassEnabled) return false;
-
-        if ("floodgate".equalsIgnoreCase(geyserBypassMethod) && floodgateApi != null) {
-            return floodgateApi.isFloodgatePlayer(player.getUniqueId());
-        }
-
-        // 默认：UUID 版本检测，基岩版 UUID 版本为 3
+        // UUID version 3 = 基岩版，4 = Java版
         return player.getUniqueId().version() == 3;
     }
 
@@ -214,7 +188,6 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
         lastSpeedLocations.remove(uuid);
     }
 
-    // ================= 传统检测 =================
     @EventHandler(ignoreCancelled = true)
     public void onMove(PlayerMoveEvent e) {
         Player player = e.getPlayer();
@@ -262,14 +235,14 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
         double dx = to.getX() - from.getX();
         double dz = to.getZ() - from.getZ();
         double dist = Math.sqrt(dx * dx + dz * dz);
-        double speed = dist / 0.05; // 每 tick 0.05 秒
+        double speed = dist / 0.05;
 
         if (speed > maxBoatSpeed) {
             smartPunish(player, String.format("异常船速 (%.1f m/s)", speed));
         }
     }
 
-    // ================= 速度检测 =================
+    // 速度检测
     private void checkPlayerSpeed(Player player) {
         UUID uuid = player.getUniqueId();
         Location current = player.getLocation().clone();
@@ -299,8 +272,7 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
             String result = PlaceholderAPI.setPlaceholders(player, apPlaceholder);
             try {
                 apBonus = Double.parseDouble(result);
-            } catch (NumberFormatException ignored) {
-            }
+            } catch (NumberFormatException ignored) { }
         }
         return maxSpeed * (1.0 + apBonus / 100.0);
     }
@@ -312,9 +284,9 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
                 player.getName(), actual, allowed));
     }
 
-    // ================= 累进处罚 + 封禁码 =================
+    // 累进处罚 + 封禁码
     private void smartPunish(Player player, String reason) {
-        if (isExempted(player)) return; // 二次保险
+        if (isExempted(player)) return;
         UUID uuid = player.getUniqueId();
         long now = System.currentTimeMillis();
 
@@ -392,7 +364,6 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
         getLogger().info("封禁 " + player.getName() + " 封禁码: " + code + " 原因: " + reason);
     }
 
-    // ================= 命令处理 =================
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         if (!sender.hasPermission("deepguard.admin")) {
@@ -508,7 +479,6 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
         }
     }
 
-    // ================= AI 分析 =================
     private void analyzePlayerAsync(Player player) {
         analyzePlayerAsync(player, probs -> {
             float cheatProb = probs[1];
@@ -543,7 +513,7 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
             return Arrays.asList("report", "lookup", "reload");
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("report")) {
-            return null; // 玩家列表
+            return null;
         }
         return Collections.emptyList();
     }
