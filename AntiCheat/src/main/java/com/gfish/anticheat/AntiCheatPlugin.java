@@ -1,5 +1,6 @@
 package com.gfish.anticheat;
 
+import me.clip.placeholderapi.PlaceholderAPI;
 import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.command.Command;
@@ -28,6 +29,7 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
     private final Map<UUID, BehaviorRecorder> recorders = new HashMap<>();
     private final Map<UUID, Integer> flyWarnings = new HashMap<>();
     private final Map<UUID, List<Long>> cheatTimestamps = new HashMap<>();
+    private final Map<UUID, Location> lastSpeedLocations = new HashMap<>();  // 速度检测
 
     private AIInferenceEngine aiEngine;
     private double autoPunishThreshold, alertThreshold;
@@ -35,9 +37,11 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
     private String punishCmd;
     private String banCmd;
     private boolean aiEnabled;
-    private boolean flyCheck, boatSpeedCheck;
-    private double maxBoatSpeed;
-    private File violationsFolder; // 封禁记录保存目录
+    private boolean flyCheck, boatSpeedCheck, speedCheckEnabled;
+    private double maxBoatSpeed, maxSpeed;
+    private String apPlaceholder, speedPunishCommand;
+    private File violationsFolder;
+    private boolean papiEnabled = false;
 
     private static final long VIOLATION_WINDOW_MS = 5 * 60 * 1000;
     private static final int MAX_KICKS = 3;
@@ -47,7 +51,12 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
         saveDefaultConfig();
         loadConfigValues();
 
-        // 创建记录目录
+        // PlaceholderAPI
+        if (Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI")) {
+            papiEnabled = true;
+            getLogger().info("PlaceholderAPI 已挂接，速度检测将动态计算属性加成。");
+        }
+
         violationsFolder = new File(getDataFolder(), "violations");
         if (!violationsFolder.exists()) violationsFolder.mkdirs();
 
@@ -67,6 +76,7 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
 
         getServer().getPluginManager().registerEvents(this, this);
 
+        // 每 tick 记录行为
         new BukkitRunnable() {
             @Override
             public void run() {
@@ -77,6 +87,20 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
             }
         }.runTaskTimer(this, 0L, 1L);
 
+        // 每秒速度检测
+        if (speedCheckEnabled) {
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+                    for (Player player : getServer().getOnlinePlayers()) {
+                        if (player.hasPermission("deepguard.bypass")) continue;
+                        checkPlayerSpeed(player);
+                    }
+                }
+            }.runTaskTimer(this, 20L, 20L);
+        }
+
+        // 每分钟 AI 分析
         if (aiEnabled) {
             new BukkitRunnable() {
                 @Override
@@ -88,7 +112,7 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
             }.runTaskTimer(this, 1200L, 1200L);
         }
 
-        getLogger().info("AntiCheat (Gfish) 已启用");
+        getLogger().info("DeepGuard (Gfish) 已启用");
     }
 
     private void loadConfigValues() {
@@ -96,12 +120,17 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
         autoPunishThreshold = getConfig().getDouble("ai.auto-punish-threshold", 0.85);
         alertThreshold = getConfig().getDouble("ai.alert-threshold", 0.5);
         analysisSeconds = getConfig().getInt("ai.analysis-seconds", 30);
-        punishCmd = getConfig().getString("punish-command", "kick %player% §c[AntiCheat] 检测到异常行为 [封禁码: %code%]");
-        banCmd = getConfig().getString("ban-command", "ban %player% §c[AntiCheat] 多次作弊行为 [封禁码: %code%]");
+        punishCmd = getConfig().getString("punish-command", "kick %player% §c[DeepGuard] 检测到异常行为 [封禁码: %code%]");
+        banCmd = getConfig().getString("ban-command", "ban %player% §c[DeepGuard] 多次作弊行为 [封禁码: %code%]");
 
         flyCheck = getConfig().getBoolean("movement.fly", true);
         boatSpeedCheck = getConfig().getBoolean("movement.boat-speed", true);
         maxBoatSpeed = getConfig().getDouble("movement.max-boat-speed", 12.0);
+
+        speedCheckEnabled = getConfig().getBoolean("movement.speed.enabled", false);
+        maxSpeed = getConfig().getDouble("movement.speed.max-speed", 5.0);
+        apPlaceholder = getConfig().getString("movement.speed.ap-placeholder", "%ap_moving:max%");
+        speedPunishCommand = getConfig().getString("movement.speed.command", "kick %player% §c你移动速度过快！");
     }
 
     private BehaviorRecorder.BehaviorTick captureTick(Player player) {
@@ -139,6 +168,7 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
         recorders.remove(uuid);
         flyWarnings.remove(uuid);
         cheatTimestamps.remove(uuid);
+        lastSpeedLocations.remove(uuid);
     }
 
     // ================= 基础反作弊 =================
@@ -152,6 +182,7 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
 
         if (flyCheck) checkFly(player, to);
         if (boatSpeedCheck) checkBoatSpeed(player, e.getFrom(), to);
+        // 速度检测由独立的定时任务处理，不在此处
     }
 
     private void checkFly(Player player, Location to) {
@@ -195,30 +226,67 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
         }
     }
 
-    // ================= 处罚逻辑（含封禁码） =================
+    // ================= 速度检测 =================
+    private void checkPlayerSpeed(Player player) {
+        UUID uuid = player.getUniqueId();
+        Location current = player.getLocation().clone();
+        Location last = lastSpeedLocations.get(uuid);
+
+        if (last == null || !current.getWorld().equals(last.getWorld())) {
+            lastSpeedLocations.put(uuid, current);
+            return;
+        }
+
+        double dx = current.getX() - last.getX();
+        double dz = current.getZ() - last.getZ();
+        double distance = Math.sqrt(dx * dx + dz * dz);
+        double speed = distance; // 格/秒（检测间隔1秒）
+
+        double allowed = getMaxAllowedSpeed(player);
+        if (speed > allowed) {
+            executeSpeedPunish(player, speed, allowed);
+        }
+
+        lastSpeedLocations.put(uuid, current);
+    }
+
+    private double getMaxAllowedSpeed(Player player) {
+        double apBonus = 0.0;
+        if (papiEnabled) {
+            String result = PlaceholderAPI.setPlaceholders(player, apPlaceholder);
+            try {
+                apBonus = Double.parseDouble(result);
+            } catch (NumberFormatException ignored) { }
+        }
+        return maxSpeed * (1.0 + apBonus / 100.0);
+    }
+
+    private void executeSpeedPunish(Player player, double actual, double allowed) {
+        String cmd = speedPunishCommand.replace("%player%", player.getName());
+        getServer().dispatchCommand(getServer().getConsoleSender(), cmd);
+        getLogger().info(String.format("玩家 %s 速度过快 (%.2f > %.2f)，已执行速度处罚命令", 
+                player.getName(), actual, allowed));
+    }
+
+    // ================= 智能累进处罚 + 封禁码 =================
     private void smartPunish(Player player, String reason) {
         UUID uuid = player.getUniqueId();
         long now = System.currentTimeMillis();
 
-        // 记录违规时间
         cheatTimestamps.computeIfAbsent(uuid, k -> new ArrayList<>()).add(now);
 
-        // 生成唯一封禁码（8位，便于手动输入）
         String code = UUID.randomUUID().toString().substring(0, 8);
-        // 保存行为记录文件
         saveViolationRecord(player, code);
 
-        // 统计5分钟内的违规次数
         int recentViolations = countRecentViolations(uuid, now, VIOLATION_WINDOW_MS);
-
         String fullReason = reason + " [封禁码: " + code + "]";
+
         if (recentViolations > MAX_KICKS) {
             executeBan(player, fullReason, code);
         } else {
             executeKick(player, fullReason, code);
         }
 
-        // 清理过期时间戳
         cleanupOldTimestamps(uuid, now, VIOLATION_WINDOW_MS);
     }
 
@@ -237,9 +305,6 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
         }
     }
 
-    /**
-     * 保存玩家最近 30 秒的行为记录到 violations/<code>.jsonl
-     */
     private void saveViolationRecord(Player player, String code) {
         BehaviorRecorder rec = recorders.get(player.getUniqueId());
         if (rec == null) return;
@@ -286,7 +351,7 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
     // ================= 命令 =================
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-        if (!sender.hasPermission("anticheat.admin")) {
+        if (!sender.hasPermission("deepguard.admin")) {
             sender.sendMessage("§c权限不足。");
             return true;
         }
@@ -345,9 +410,6 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
         });
     }
 
-    /**
-     * 查询封禁码对应的记录文件
-     */
     private void handleLookup(CommandSender sender, String code) {
         File file = new File(violationsFolder, code + ".jsonl");
         if (!file.exists()) {
@@ -361,28 +423,24 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
             double maxPitch = -90, minPitch = 90;
             double maxSpeed = 0;
             for (String line : lines) {
-                if (!line.isEmpty()) {
-                    // 简单解析（避免复杂JSON解析）
-                    if (line.contains("\"placing\":true")) placingCount++;
-                    // 提取pitch
-                    int pitchIdx = line.indexOf("\"pitch\":");
-                    if (pitchIdx != -1) {
-                        int start = pitchIdx + 8;
-                        int end = line.indexOf(',', start);
-                        if (end == -1) end = line.indexOf('}', start);
-                        double pitch = Double.parseDouble(line.substring(start, end));
-                        if (pitch > maxPitch) maxPitch = pitch;
-                        if (pitch < minPitch) minPitch = pitch;
-                    }
-                    // 提取moveSpeed
-                    int speedIdx = line.indexOf("\"moveSpeed\":");
-                    if (speedIdx != -1) {
-                        int start = speedIdx + 12;
-                        int end = line.indexOf(',', start);
-                        if (end == -1) end = line.indexOf('}', start);
-                        double speed = Double.parseDouble(line.substring(start, end));
-                        if (speed > maxSpeed) maxSpeed = speed;
-                    }
+                if (line.isEmpty()) continue;
+                if (line.contains("\"placing\":true")) placingCount++;
+                int pitchIdx = line.indexOf("\"pitch\":");
+                if (pitchIdx != -1) {
+                    int start = pitchIdx + 8;
+                    int end = line.indexOf(',', start);
+                    if (end == -1) end = line.indexOf('}', start);
+                    double pitch = Double.parseDouble(line.substring(start, end));
+                    if (pitch > maxPitch) maxPitch = pitch;
+                    if (pitch < minPitch) minPitch = pitch;
+                }
+                int speedIdx = line.indexOf("\"moveSpeed\":");
+                if (speedIdx != -1) {
+                    int start = speedIdx + 12;
+                    int end = line.indexOf(',', start);
+                    if (end == -1) end = line.indexOf('}', start);
+                    double speed = Double.parseDouble(line.substring(start, end));
+                    if (speed > maxSpeed) maxSpeed = speed;
                 }
             }
             sender.sendMessage("§6===== 违规记录 " + code + " =====");
@@ -407,7 +465,7 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
                 String msg = String.format("§e[AC] §c%s §7AI 定时检测：可疑行为 (%.1f%%)",
                         player.getName(), cheatProb * 100);
                 for (Player p : getServer().getOnlinePlayers()) {
-                    if (p.hasPermission("anticheat.admin")) p.sendMessage(msg);
+                    if (p.hasPermission("deepguard.admin")) p.sendMessage(msg);
                 }
                 getLogger().info(ChatColor.stripColor(msg));
             }
@@ -432,7 +490,7 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
             return Arrays.asList("report", "lookup", "reload");
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("report")) {
-            return null; // 玩家列表
+            return null;
         }
         return Collections.emptyList();
     }
