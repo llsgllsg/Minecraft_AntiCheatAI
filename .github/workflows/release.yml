@@ -1,0 +1,54 @@
+name: 发布 Release
+
+# 打 tag (v*) 或手动触发时发布，附带插件 jar 与 AI 模型。
+# 插件启动时自动从 latest release 下载模型，因此模型会随发布一起更新。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: 构建全部模块
+        run: mvn -B clean package
+
+      - name: 校验产物
+        run: |
+          test -f AntiCheat/target/DeepGuard.jar
+          test -f recorder-plugin/target/BehaviorRecorder.jar
+          test -f AntiCheat/src/main/resources/scaffold_detector.onnx
+
+      - name: 创建/更新 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(grep -m1 '<version>' pom.xml | sed 's/.*<version>\(.*\)<\/version>.*/\1/')
+          TAG="v${VERSION}"
+          if [ "${{ github.ref_type }}" = "tag" ]; then TAG="${{ github.ref_name }}"; fi
+          echo "发布 tag: ${TAG}"
+          gh release create "${TAG}" \
+            AntiCheat/target/DeepGuard.jar \
+            recorder-plugin/target/BehaviorRecorder.jar \
+            AntiCheat/src/main/resources/scaffold_detector.onnx \
+            --title "DeepGuard ${TAG}" --generate-notes 2>/dev/null \
+            || { echo "Release 已存在，更新产物"; \
+                 gh release upload "${TAG}" \
+                   AntiCheat/target/DeepGuard.jar \
+                   recorder-plugin/target/BehaviorRecorder.jar \
+                   AntiCheat/src/main/resources/scaffold_detector.onnx \
+                   --clobber; }

@@ -16,6 +16,7 @@
 - **自动定时扫描**：每 60 秒对所有在线玩家进行静默 AI 分析，发现可疑行为自动通知或处罚
 - **举报推理**：管理员使用 `/ac report <玩家>` 手动触发 AI 分析，输出详细概率
 - **数据录制**：可独立运行的录制插件，自动采集玩家行为数据用于训练新模型
+- **自动更新**：启动时检查 GitHub 新版本并通知管理员；自动下载最新 AI 模型，无需手动替换
 
 ---
 
@@ -25,9 +26,35 @@
 | --- | --- |
 | `/ac report <玩家>` | 分析该玩家最近 30 秒行为，返回正常/作弊概率 |
 | `/ac lookup <封禁码>` | 查看违规记录详情 |
+| `/ac update` | 手动检查更新并同步最新 AI 模型 |
 | `/ac reload` | 重载配置 |
 
 权限节点：`deepguard.admin`（管理员）、`deepguard.bypass`（豁免检测）。
+
+---
+
+## 版本检测与模型自动更新
+
+插件启动时（以及 `/ac update`）会：
+
+1. 查询 GitHub 最新 Release，发现新版本时在控制台与游戏内通知管理员；
+2. 自动下载 latest release 中的 `scaffold_detector.onnx` 到数据目录并重载——管理员无需手动下载模型。
+
+模型加载优先级：数据目录已有模型 → 从 jar 内置模型解压 → 自动下载。配置文件 `config.yml` 的 `updates` 段可开关或自定义 URL：
+
+```yaml
+updates:
+  enabled: true
+  version-check: true
+  auto-download-model: true
+  version-url: "https://api.github.com/repos/llsgllsg/Minecraft_AntiCheatAI/releases/latest"
+  model-url: "https://github.com/llsgllsg/Minecraft_AntiCheatAI/releases/latest/download/scaffold_detector.onnx"
+```
+
+重新训练模型：在 GitHub Actions 的 **Actions → 重新训练模型** 手动触发，会用仓库内
+已提交的特征数据（`python/X.npy` / `python/y.npy`）重训并把新模型提交回仓库、
+上传产物。打 `v*` tag 或手动触发 **发布 Release** 工作流即可让所有服务器自动同步到
+最新模型。
 
 ---
 

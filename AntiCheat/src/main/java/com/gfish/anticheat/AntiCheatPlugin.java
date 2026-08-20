@@ -50,6 +50,7 @@ public final class AntiCheatPlugin extends JavaPlugin implements Listener {
 
     private AIInferenceEngine aiEngine;
     private PunishmentManager punishmentManager;
+    private UpdateManager updateManager;
 
     private double autoPunishThreshold;
     private double alertThreshold;
@@ -90,20 +91,15 @@ public final class AntiCheatPlugin extends JavaPlugin implements Listener {
         }
 
         punishmentManager = new PunishmentManager(this);
+        updateManager = new UpdateManager(this);
 
         if (aiEnabled) {
-            aiEngine = new AIInferenceEngine();
-            File modelFile = new File(getDataFolder(), getConfig().getString("ai.model-path", "scaffold_detector.onnx"));
-            if (modelFile.exists()) {
-                if (aiEngine.loadModel(modelFile.getAbsolutePath())) {
-                    getLogger().info("AI 模型加载成功");
-                } else {
-                    getLogger().warning("AI 模型加载失败");
-                }
-            } else {
-                getLogger().warning("找不到 AI 模型文件: " + modelFile.getAbsolutePath());
-            }
+            loadAiModel();
+            // 自动拉取最新模型，管理员无需手动更新模型文件
+            updateManager.downloadModelAsync();
         }
+        // 启动时异步检测新版本
+        updateManager.checkVersionAsync();
 
         registerChecks();
         getServer().getPluginManager().registerEvents(this, this);
@@ -262,6 +258,31 @@ public final class AntiCheatPlugin extends JavaPlugin implements Listener {
     // AI 检测（保留原功能）
     // ------------------------------------------------------------------
 
+    /**
+     * 加载 AI 模型：优先使用数据目录中的模型文件，缺失时从 jar 内置资源解压，开箱即用。
+     * 由 UpdateManager 在自动下载完成后调用以重载最新模型。
+     */
+    public void loadAiModel() {
+        if (!aiEnabled) return;
+        File modelFile = new File(getDataFolder(), getConfig().getString("ai.model-path", "scaffold_detector.onnx"));
+        if (!modelFile.exists() && getResource("scaffold_detector.onnx") != null) {
+            saveResource("scaffold_detector.onnx", false);
+            getLogger().info("已从内置资源解压模型: " + modelFile.getName());
+        }
+        if (modelFile.exists()) {
+            if (aiEngine == null) {
+                aiEngine = new AIInferenceEngine();
+            }
+            if (aiEngine.loadModel(modelFile.getAbsolutePath())) {
+                getLogger().info("AI 模型加载成功");
+            } else {
+                getLogger().warning("AI 模型加载失败");
+            }
+        } else {
+            getLogger().warning("找不到 AI 模型文件: " + modelFile.getAbsolutePath());
+        }
+    }
+
     private void analyzePlayerAsync(Player player) {
         analyzePlayerAsync(player, probs -> {
             float cheatProb = probs[1];
@@ -310,6 +331,7 @@ public final class AntiCheatPlugin extends JavaPlugin implements Listener {
         if (args.length == 0) {
             sender.sendMessage("§e/ac report <玩家> §7- AI 分析玩家行为");
             sender.sendMessage("§e/ac lookup <封禁码> §7- 查看违规记录详情");
+            sender.sendMessage("§e/ac update §7- 检查更新并同步最新模型");
             sender.sendMessage("§e/ac reload §7- 重载配置");
             return true;
         }
@@ -338,6 +360,13 @@ public final class AntiCheatPlugin extends JavaPlugin implements Listener {
                 }
                 handleLookup(sender, args[1]);
                 break;
+            case "update":
+                sender.sendMessage("§6正在检查更新并同步最新模型...");
+                updateManager.checkVersionAsync();
+                updateManager.downloadModelAsync().thenRun(() ->
+                        Bukkit.getScheduler().runTask(this, () ->
+                                sender.sendMessage("§a更新检查完成，模型已同步到最新。")));
+                break;
             default:
                 sender.sendMessage("§c未知子命令。");
         }
@@ -347,7 +376,7 @@ public final class AntiCheatPlugin extends JavaPlugin implements Listener {
     @Override
     public List<String> onTabComplete(CommandSender sender, Command cmd, String alias, String[] args) {
         if (args.length == 1) {
-            return Arrays.asList("report", "lookup", "reload");
+            return Arrays.asList("report", "lookup", "reload", "update");
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("report")) {
             return null;
