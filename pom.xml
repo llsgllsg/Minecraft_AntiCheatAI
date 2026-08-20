@@ -8,7 +8,7 @@
     <!-- 聚合 + 父 POM：recorder-plugin 依赖此模块作为父级 -->
     <groupId>com.example</groupId>
     <artifactId>AntiCheatAI</artifactId>
-    <version>1.0</version>
+    <version>1.1.0</version>
     <packaging>pom</packaging>
 
     <name>AntiCheatAI</name>
