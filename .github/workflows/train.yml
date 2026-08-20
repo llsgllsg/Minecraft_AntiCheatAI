@@ -20,8 +20,10 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 安装依赖
-        run: pip install -r python/requirements.txt
+      - name: 安装依赖（CPU 版 PyTorch）
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy scikit-learn onnx onnxruntime matplotlib
 
       - name: 训练模型
         working-directory: python

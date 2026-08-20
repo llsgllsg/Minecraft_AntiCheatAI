@@ -101,13 +101,23 @@ def main():
     args = parser.parse_args()
 
     set_seed(args.seed)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cpu')
     print(f'使用设备: {device}')
 
     X_path, y_path = os.path.join(args.data, 'X.npy'), os.path.join(args.data, 'y.npy')
     if not (os.path.exists(X_path) and os.path.exists(y_path)):
-        print(f'错误: 未找到 {X_path} 与 {y_path}，请先运行 prepare_data.py')
-        sys.exit(1)
+        print('未找到 X.npy / y.npy，自动调用 prepare_data.py 生成...')
+        import subprocess
+        raw_dir = os.path.join(args.data, 'data')
+        if not os.path.isdir(raw_dir):
+            # 向上一级找 data/ 目录
+            raw_dir = os.path.join(os.path.dirname(args.data), 'data')
+        if os.path.isdir(raw_dir):
+            subprocess.check_call([sys.executable, 'prepare_data.py', raw_dir, '--out', args.data])
+        else:
+            print(f'错误: 未找到 X.npy / y.npy，也未找到 raw data 目录 ({raw_dir})')
+            print('请把 jsonl 样本放入 data/normal/ 与 data/cheat/ 目录，或先运行 prepare_data.py')
+            sys.exit(1)
 
     print('加载数据...')
     X = np.load(X_path)
@@ -131,14 +141,14 @@ def main():
 
     model = ScaffoldDetector().to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=0.000006)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
 
     if args.quick:
         epochs = 2
         patience = 1
     else:
-        epochs = args.epochs if args.epochs > 0 else 50
+        epochs = args.epochs if args.epochs > 0 else 5000
         patience = 10
 
     best_val_loss = float('inf')
