@@ -101,7 +101,7 @@ def main():
     args = parser.parse_args()
 
     set_seed(args.seed)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cpu')
     print(f'使用设备: {device}')
 
     X_path, y_path = os.path.join(args.data, 'X.npy'), os.path.join(args.data, 'y.npy')
@@ -131,14 +131,14 @@ def main():
 
     model = ScaffoldDetector().to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.Adam(model.parameters(), lr=0.000006)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
 
     if args.quick:
         epochs = 2
         patience = 1
     else:
-        epochs = args.epochs if args.epochs > 0 else 50
+        epochs = args.epochs if args.epochs > 0 else 5000
         patience = 10
 
     best_val_loss = float('inf')
