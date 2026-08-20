@@ -23,3 +23,14 @@ ai:
   auto-punish-threshold: 0.85
   alert-threshold: 0.5
   analysis-seconds: 30
+
+# 版本检测与模型自动更新
+updates:
+  enabled: true
+  # 启动时检查 GitHub 最新 Release，发现新版本通知管理员
+  version-check: true
+  # 启动时自动下载最新模型到数据目录并重载，无需手动替换
+  auto-download-model: true
+  # 留空则使用默认地址（当前仓库 latest release）
+  version-url: "https://api.github.com/repos/llsgllsg/Minecraft_AntiCheatAI/releases/latest"
+  model-url: "https://github.com/llsgllsg/Minecraft_AntiCheatAI/releases/latest/download/scaffold_detector.onnx"

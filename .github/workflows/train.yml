@@ -1,0 +1,51 @@
+name: 重新训练模型
+
+# 手动触发：用仓库内的真实数据（python/X.npy, python/y.npy）重训模型，
+# 训练完成后把新模型提交回仓库并上传产物。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: pip install -r python/requirements.txt
+
+      - name: 训练模型
+        working-directory: python
+        run: python train_model.py --data .
+
+      - name: 更新内置模型
+        run: cp python/scaffold_detector.onnx AntiCheat/src/main/resources/scaffold_detector.onnx
+
+      - name: 提交新模型回仓库
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "llsgllsg"
+          git config user.email "151439431+llsgllsg@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git add AntiCheat/src/main/resources/scaffold_detector.onnx
+          git commit -m "chore: 重新训练更新模型" || echo "模型无变化"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: 上传训练产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-model
+          path: |
+            python/scaffold_detector.onnx
+            python/training_curves.png
+          if-no-files-found: error

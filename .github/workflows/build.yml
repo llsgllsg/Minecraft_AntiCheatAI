@@ -1,6 +1,9 @@
 name: 构建 DeepGuard
 
+# 每次 push（任意分支）与 Pull Request 自动构建
 on:
+  push:
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -20,16 +23,24 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.m2/repository
-          key: ${{ runner.os }}-maven-${{ hashFiles('AntiCheat/pom.xml') }}
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      - name: 构建 AntiCheat
-        working-directory: AntiCheat
-        run: mvn clean package -DskipTests
+      # 根 pom 聚合 AntiCheat 与 recorder-plugin，一次构建全部
+      - name: 构建全部模块
+        run: mvn -B clean package
+
+      - name: 校验产物存在
+        run: |
+          test -f AntiCheat/target/DeepGuard.jar
+          test -f recorder-plugin/target/BehaviorRecorder.jar
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: DeepGuard
-          path: AntiCheat/target/DeepGuard.jar
+          name: DeepGuard-build
+          path: |
+            AntiCheat/target/DeepGuard.jar
+            recorder-plugin/target/BehaviorRecorder.jar
+          if-no-files-found: error

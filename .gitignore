@@ -1,0 +1,26 @@
+# Maven
+target/
+*.class
+dependency-reduced-pom.xml
+
+# Python 训练中间产物（数据特征与部署模型显式提交，见下方白名单）
+python/data/
+*.pth
+*.onnx
+training_curves.png
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 允许提交：训练特征数据与部署模型
+!python/X.npy
+!python/y.npy
+!AntiCheat/src/main/resources/scaffold_detector.onnx
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db

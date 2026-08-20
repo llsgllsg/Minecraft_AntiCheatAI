@@ -1,51 +1,77 @@
 package com.gfish.anticheat;
 
-import me.clip.placeholderapi.PlaceholderAPI;
-import org.bukkit.*;
-import org.bukkit.block.Block;
+import com.gfish.anticheat.check.BoatSpeedCheck;
+import com.gfish.anticheat.check.Check;
+import com.gfish.anticheat.check.CheckData;
+import com.gfish.anticheat.check.FlyCheck;
+import com.gfish.anticheat.check.SpeedCheck;
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.GameMode;
+import org.bukkit.Location;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
-import org.bukkit.entity.Boat;
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.event.player.PlayerVelocityEvent;
 import org.bukkit.plugin.java.JavaPlugin;
-import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 
-import java.io.BufferedWriter;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.StandardOpenOption;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
-public class AntiCheatPlugin extends JavaPlugin implements Listener {
+/**
+ * DeepGuard 主类 —— 协调者角色（对应 Grim 的 GrimPlugin）。
+ * <p>
+ * 只负责：生命周期（TrackedPlayer 的创建/销毁）、调度（录制、检查、AI 扫描）、
+ * 命令与事件分发。具体检测逻辑下沉到 {@code check} 包，处罚下沉到
+ * {@link PunishmentManager}。AI 检测能力（行为录制 -> 特征图 -> ONNX 推理）完整保留。
+ */
+public final class AntiCheatPlugin extends JavaPlugin implements Listener {
 
-    private final Map<UUID, BehaviorRecorder> recorders = new HashMap<>();
-    private final Map<UUID, Integer> flyWarnings = new HashMap<>();
-    private final Map<UUID, List<Long>> cheatTimestamps = new HashMap<>();
-    private final Map<UUID, Location> lastSpeedLocations = new HashMap<>();
+    private final Map<UUID, TrackedPlayer> trackedPlayers = new HashMap<>();
+    private final List<Check> checks = new ArrayList<>();
 
     private AIInferenceEngine aiEngine;
-    private double autoPunishThreshold, alertThreshold;
+    private PunishmentManager punishmentManager;
+    private UpdateManager updateManager;
+
+    private double autoPunishThreshold;
+    private double alertThreshold;
     private int analysisSeconds;
-    private String punishCmd, banCmd;
+    private String punishCmd;
+    private String banCmd;
     private boolean aiEnabled;
-    private boolean flyCheck, boatSpeedCheck, speedCheckEnabled;
-    private double maxBoatSpeed, maxSpeed;
-    private String apPlaceholder, speedPunishCommand;
+    private boolean flyCheck;
+    private boolean boatSpeedCheck;
+    private boolean speedCheckEnabled;
+    private double maxBoatSpeed;
+    private double maxSpeed;
+    private String apPlaceholder;
+    private String speedPunishCommand;
     private File violationsFolder;
     private boolean papiEnabled = false;
     private boolean geyserBypassEnabled;
 
-    private static final long VIOLATION_WINDOW_MS = 5 * 60 * 1000;
-    private static final int MAX_KICKS = 3;
+    // ------------------------------------------------------------------
+    // 生命周期
+    // ------------------------------------------------------------------
 
     @Override
     public void onEnable() {
@@ -60,56 +86,46 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
         }
 
         violationsFolder = new File(getDataFolder(), "violations");
-        if (!violationsFolder.exists()) violationsFolder.mkdirs();
-
-        if (aiEnabled) {
-            aiEngine = new AIInferenceEngine();
-            File modelFile = new File(getDataFolder(), getConfig().getString("ai.model-path", "scaffold_detector.onnx"));
-            if (modelFile.exists()) {
-                if (aiEngine.loadModel(modelFile.getAbsolutePath())) {
-                    getLogger().info("AI 模型加载成功");
-                } else {
-                    getLogger().warning("AI 模型加载失败");
-                }
-            } else {
-                getLogger().warning("找不到 AI 模型文件: " + modelFile.getAbsolutePath());
-            }
+        if (!violationsFolder.exists()) {
+            violationsFolder.mkdirs();
         }
 
+        punishmentManager = new PunishmentManager(this);
+        updateManager = new UpdateManager(this);
+
+        if (aiEnabled) {
+            loadAiModel();
+            // 自动拉取最新模型，管理员无需手动更新模型文件
+            updateManager.downloadModelAsync();
+        }
+        // 启动时异步检测新版本
+        updateManager.checkVersionAsync();
+
+        registerChecks();
         getServer().getPluginManager().registerEvents(this, this);
 
-        // 每 tick 记录行为
+        // 每 tick：录制行为 + 驱动按 tick 的检查
         new BukkitRunnable() {
             @Override
             public void run() {
                 for (Player player : getServer().getOnlinePlayers()) {
-                    recorders.computeIfAbsent(player.getUniqueId(), k -> new BehaviorRecorder())
-                            .record(captureTick(player));
+                    TrackedPlayer tracked = getOrCreate(player);
+                    tracked.recordTick();
+                    for (Check check : checks) {
+                        check.tick(player, tracked);
+                    }
                 }
             }
         }.runTaskTimer(this, 0L, 1L);
 
-        // 每秒速度检测
-        if (speedCheckEnabled) {
+        // 每 60 秒：AI 自动扫描
+        if (aiEnabled) {
             new BukkitRunnable() {
                 @Override
                 public void run() {
                     for (Player player : getServer().getOnlinePlayers()) {
                         if (isExempted(player)) continue;
                         if (player.hasPermission("deepguard.bypass")) continue;
-                        checkPlayerSpeed(player);
-                    }
-                }
-            }.runTaskTimer(this, 20L, 20L);
-        }
-
-        // 每分钟 AI 自动分析
-        if (aiEnabled) {
-            new BukkitRunnable() {
-                @Override
-                public void run() {
-                    for (Player player : getServer().getOnlinePlayers()) {
-                        if (isExempted(player)) continue;
                         analyzePlayerAsync(player);
                     }
                 }
@@ -118,6 +134,95 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
 
         getLogger().info("DeepGuard (Gfish) 已启用");
     }
+
+    @Override
+    public void onDisable() {
+        trackedPlayers.clear();
+    }
+
+    private void registerChecks() {
+        checks.add(new FlyCheck(this));
+        checks.add(new BoatSpeedCheck(this));
+        checks.add(new SpeedCheck(this));
+    }
+
+    // ------------------------------------------------------------------
+    // 玩家生命周期
+    // ------------------------------------------------------------------
+
+    @EventHandler
+    public void onJoin(PlayerJoinEvent e) {
+        getOrCreate(e.getPlayer());
+    }
+
+    @EventHandler
+    public void onQuit(PlayerQuitEvent e) {
+        trackedPlayers.remove(e.getPlayer().getUniqueId());
+    }
+
+    private TrackedPlayer getOrCreate(Player player) {
+        TrackedPlayer tracked = trackedPlayers.get(player.getUniqueId());
+        if (tracked == null) {
+            tracked = new TrackedPlayer(player);
+            trackedPlayers.put(player.getUniqueId(), tracked);
+        }
+        return tracked;
+    }
+
+    // ------------------------------------------------------------------
+    // 事件分发
+    // ------------------------------------------------------------------
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onBlockPlace(BlockPlaceEvent e) {
+        TrackedPlayer tracked = trackedPlayers.get(e.getPlayer().getUniqueId());
+        if (tracked != null) {
+            tracked.markPlacing();
+        }
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onTeleport(PlayerTeleportEvent e) {
+        TrackedPlayer tracked = trackedPlayers.get(e.getPlayer().getUniqueId());
+        if (tracked != null) {
+            tracked.onTeleport();
+        }
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onVelocity(PlayerVelocityEvent e) {
+        TrackedPlayer tracked = trackedPlayers.get(e.getPlayer().getUniqueId());
+        if (tracked != null) {
+            tracked.onVelocity();
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onMove(PlayerMoveEvent e) {
+        Player player = e.getPlayer();
+        if (isExempted(player)) return;
+        if (player.getGameMode() == GameMode.CREATIVE || player.getGameMode() == GameMode.SPECTATOR) return;
+        if (player.hasPermission("deepguard.bypass")) return;
+
+        Location to = e.getTo();
+        if (to == null) return;
+
+        TrackedPlayer tracked = trackedPlayers.get(player.getUniqueId());
+        if (tracked == null) return;
+
+        CheckData data = tracked.getProcessor().processMove(
+                e.getFrom(), to, player.isOnGround(),
+                tracked.isExempt(ExemptionType.TELEPORT),
+                tracked.isExempt(ExemptionType.VELOCITY));
+
+        for (Check check : checks) {
+            check.handleMove(player, tracked, data);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 配置
+    // ------------------------------------------------------------------
 
     private void loadConfigValues() {
         aiEnabled = getConfig().getBoolean("ai.enabled", true);
@@ -142,227 +247,80 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
     }
 
     /**
-     * 判断玩家是否豁免（Geyser 基岩版玩家），通过 UUID 版本检测
+     * 判断玩家是否豁免（Geyser 基岩版玩家），通过 UUID 版本检测。
+     * UUID version 3 = 基岩版，4 = Java版。
      */
     private boolean isExempted(Player player) {
-        if (!geyserBypassEnabled) return false;
-        // UUID version 3 = 基岩版，4 = Java版
-        return player.getUniqueId().version() == 3;
+        return geyserBypassEnabled && player.getUniqueId().version() == 3;
     }
 
-    private BehaviorRecorder.BehaviorTick captureTick(Player player) {
-        BehaviorRecorder.BehaviorTick tick = new BehaviorRecorder.BehaviorTick();
-        Location loc = player.getLocation();
-        tick.timestamp = System.currentTimeMillis();
-        tick.pitch = loc.getPitch();
-        tick.yaw = loc.getYaw();
-        tick.posX = loc.getX();
-        tick.posY = loc.getY();
-        tick.posZ = loc.getZ();
-        tick.placing = false;
-        tick.sprinting = player.isSprinting();
-        tick.onGround = player.isOnGround();
-        tick.jumping = !player.isOnGround();
-        tick.moveSpeed = player.getVelocity().length();
-        tick.vertSpeed = player.getVelocity().getY();
-        return tick;
-    }
+    // ------------------------------------------------------------------
+    // AI 检测（保留原功能）
+    // ------------------------------------------------------------------
 
-    @EventHandler
-    public void onBlockPlace(BlockPlaceEvent e) {
-        BehaviorRecorder rec = recorders.get(e.getPlayer().getUniqueId());
-        if (rec != null) {
-            BehaviorRecorder.BehaviorTick[] recent = rec.getRecentTicks(1);
-            if (recent.length > 0) {
-                recent[0].placing = true;
+    /**
+     * 加载 AI 模型：优先使用数据目录中的模型文件，缺失时从 jar 内置资源解压，开箱即用。
+     * 由 UpdateManager 在自动下载完成后调用以重载最新模型。
+     */
+    public void loadAiModel() {
+        if (!aiEnabled) return;
+        File modelFile = new File(getDataFolder(), getConfig().getString("ai.model-path", "scaffold_detector.onnx"));
+        if (!modelFile.exists() && getResource("scaffold_detector.onnx") != null) {
+            saveResource("scaffold_detector.onnx", false);
+            getLogger().info("已从内置资源解压模型: " + modelFile.getName());
+        }
+        if (modelFile.exists()) {
+            if (aiEngine == null) {
+                aiEngine = new AIInferenceEngine();
             }
-        }
-    }
-
-    @EventHandler
-    public void onQuit(PlayerQuitEvent e) {
-        UUID uuid = e.getPlayer().getUniqueId();
-        recorders.remove(uuid);
-        flyWarnings.remove(uuid);
-        cheatTimestamps.remove(uuid);
-        lastSpeedLocations.remove(uuid);
-    }
-
-    @EventHandler(ignoreCancelled = true)
-    public void onMove(PlayerMoveEvent e) {
-        Player player = e.getPlayer();
-        if (isExempted(player)) return;
-        if (player.getGameMode() == GameMode.CREATIVE || player.getGameMode() == GameMode.SPECTATOR) return;
-
-        Location to = e.getTo();
-        if (to == null) return;
-
-        if (flyCheck) checkFly(player, to);
-        if (boatSpeedCheck) checkBoatSpeed(player, e.getFrom(), to);
-    }
-
-    private void checkFly(Player player, Location to) {
-        boolean legal = player.isFlying() || player.isGliding() ||
-                player.isInsideVehicle() ||
-                player.isInWater() || player.isInLava() ||
-                player.isOnGround() ||
-                player.hasPotionEffect(PotionEffectType.LEVITATION) ||
-                player.hasPotionEffect(PotionEffectType.SLOW_FALLING);
-
-        Block below = to.clone().subtract(0, 0.1, 0).getBlock();
-        if (!below.getType().isAir() && below.getType().isSolid()) {
-            legal = true;
-        }
-
-        if (!legal) {
-            UUID uuid = player.getUniqueId();
-            int warnings = flyWarnings.getOrDefault(uuid, 0) + 1;
-            flyWarnings.put(uuid, warnings);
-            if (warnings >= 60) {
-                flyWarnings.put(uuid, 0);
-                smartPunish(player, "飞行/悬空");
+            if (aiEngine.loadModel(modelFile.getAbsolutePath())) {
+                getLogger().info("AI 模型加载成功");
+            } else {
+                getLogger().warning("AI 模型加载失败");
             }
         } else {
-            flyWarnings.put(player.getUniqueId(), 0);
+            getLogger().warning("找不到 AI 模型文件: " + modelFile.getAbsolutePath());
         }
     }
 
-    private void checkBoatSpeed(Player player, Location from, Location to) {
-        if (!player.isInsideVehicle()) return;
-        Entity vehicle = player.getVehicle();
-        if (!(vehicle instanceof Boat)) return;
-
-        double dx = to.getX() - from.getX();
-        double dz = to.getZ() - from.getZ();
-        double dist = Math.sqrt(dx * dx + dz * dz);
-        double speed = dist / 0.05;
-
-        if (speed > maxBoatSpeed) {
-            smartPunish(player, String.format("异常船速 (%.1f m/s)", speed));
-        }
-    }
-
-    // 速度检测
-    private void checkPlayerSpeed(Player player) {
-        UUID uuid = player.getUniqueId();
-        Location current = player.getLocation().clone();
-        Location last = lastSpeedLocations.get(uuid);
-
-        if (last == null || !current.getWorld().equals(last.getWorld())) {
-            lastSpeedLocations.put(uuid, current);
-            return;
-        }
-
-        double dx = current.getX() - last.getX();
-        double dz = current.getZ() - last.getZ();
-        double distance = Math.sqrt(dx * dx + dz * dz);
-        double speed = distance; // 格/秒
-
-        double allowed = getMaxAllowedSpeed(player);
-        if (speed > allowed) {
-            executeSpeedPunish(player, speed, allowed);
-        }
-
-        lastSpeedLocations.put(uuid, current);
-    }
-
-    private double getMaxAllowedSpeed(Player player) {
-        double apBonus = 0.0;
-        if (papiEnabled) {
-            String result = PlaceholderAPI.setPlaceholders(player, apPlaceholder);
-            try {
-                apBonus = Double.parseDouble(result);
-            } catch (NumberFormatException ignored) { }
-        }
-        return maxSpeed * (1.0 + apBonus / 100.0);
-    }
-
-    private void executeSpeedPunish(Player player, double actual, double allowed) {
-        String cmd = speedPunishCommand.replace("%player%", player.getName());
-        getServer().dispatchCommand(getServer().getConsoleSender(), cmd);
-        getLogger().info(String.format("玩家 %s 速度过快 (%.2f > %.2f)，已执行速度处罚",
-                player.getName(), actual, allowed));
-    }
-
-    // 累进处罚 + 封禁码
-    private void smartPunish(Player player, String reason) {
-        if (isExempted(player)) return;
-        UUID uuid = player.getUniqueId();
-        long now = System.currentTimeMillis();
-
-        cheatTimestamps.computeIfAbsent(uuid, k -> new ArrayList<>()).add(now);
-
-        String code = UUID.randomUUID().toString().substring(0, 8);
-        saveViolationRecord(player, code);
-
-        int recentViolations = countRecentViolations(uuid, now, VIOLATION_WINDOW_MS);
-        String fullReason = reason + " [封禁码: " + code + "]";
-
-        if (recentViolations > MAX_KICKS) {
-            executeBan(player, fullReason, code);
-        } else {
-            executeKick(player, fullReason, code);
-        }
-
-        cleanupOldTimestamps(uuid, now, VIOLATION_WINDOW_MS);
-    }
-
-    private int countRecentViolations(UUID uuid, long now, long windowMs) {
-        List<Long> timestamps = cheatTimestamps.getOrDefault(uuid, Collections.emptyList());
-        long cutoff = now - windowMs;
-        return (int) timestamps.stream().filter(t -> t >= cutoff).count();
-    }
-
-    private void cleanupOldTimestamps(UUID uuid, long now, long windowMs) {
-        List<Long> timestamps = cheatTimestamps.get(uuid);
-        if (timestamps != null) {
-            long cutoff = now - windowMs;
-            timestamps.removeIf(t -> t < cutoff);
-            if (timestamps.isEmpty()) cheatTimestamps.remove(uuid);
-        }
-    }
-
-    private void saveViolationRecord(Player player, String code) {
-        BehaviorRecorder rec = recorders.get(player.getUniqueId());
-        if (rec == null) return;
-        BehaviorRecorder.BehaviorTick[] ticks = rec.getRecentTicks(analysisSeconds * 20);
-        if (ticks.length == 0) return;
-
-        File file = new File(violationsFolder, code + ".jsonl");
-        try (BufferedWriter writer = Files.newBufferedWriter(file.toPath(),
-                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
-            for (BehaviorRecorder.BehaviorTick tick : ticks) {
-                writer.write(toJsonLine(tick));
-                writer.newLine();
+    private void analyzePlayerAsync(Player player) {
+        analyzePlayerAsync(player, probs -> {
+            float cheatProb = probs[1];
+            if (cheatProb >= autoPunishThreshold) {
+                getPunishmentManager().handleViolation(player, getOrCreate(player), "AI 定时检测：高度疑似作弊");
+            } else if (cheatProb >= alertThreshold) {
+                String msg = String.format("§e[AC] §c%s §7AI 定时检测：可疑行为 (%.1f%%)",
+                        player.getName(), cheatProb * 100);
+                for (Player p : getServer().getOnlinePlayers()) {
+                    if (p.hasPermission("deepguard.admin")) p.sendMessage(msg);
+                }
+                getLogger().info(ChatColor.stripColor(msg));
             }
-        } catch (IOException e) {
-            getLogger().warning("无法保存违规记录文件: " + e.getMessage());
-        }
+        });
     }
 
-    private String toJsonLine(BehaviorRecorder.BehaviorTick t) {
-        return String.format(
-                "{\"ts\":%d,\"pitch\":%.2f,\"yaw\":%.2f," +
-                        "\"posX\":%.2f,\"posY\":%.2f,\"posZ\":%.2f," +
-                        "\"placing\":%b,\"sprinting\":%b,\"jumping\":%b," +
-                        "\"onGround\":%b,\"moveSpeed\":%.3f,\"vertSpeed\":%.3f}",
-                t.timestamp, t.pitch, t.yaw,
-                t.posX, t.posY, t.posZ,
-                t.placing, t.sprinting, t.jumping,
-                t.onGround, t.moveSpeed, t.vertSpeed);
+    private void analyzePlayerAsync(Player player, java.util.function.Consumer<float[]> callback) {
+        TrackedPlayer tracked = trackedPlayers.get(player.getUniqueId());
+        if (tracked == null) return;
+
+        BehaviorRecorder.BehaviorTick[] ticks = tracked.getRecorder().getRecentTicks(analysisSeconds * 20);
+        if (ticks.length < 100) return;
+
+        float[][][] image = BehaviorImageBuilder.buildImage(ticks);
+        CompletableFuture.supplyAsync(() -> aiEngine.infer(image))
+                .exceptionally(ex -> {
+                    getLogger().warning("AI 推理异常: " + ex.getMessage());
+                    return null;
+                })
+                .thenAccept(probs -> {
+                    if (probs == null || !isEnabled()) return;
+                    Bukkit.getScheduler().runTask(this, () -> callback.accept(probs));
+                });
     }
 
-    private void executeKick(Player player, String reason, String code) {
-        String cmd = punishCmd.replace("%player%", player.getName()).replace("%code%", code);
-        getServer().dispatchCommand(getServer().getConsoleSender(), cmd);
-        getLogger().info("踢出 " + player.getName() + " 封禁码: " + code + " 原因: " + reason);
-    }
-
-    private void executeBan(Player player, String reason, String code) {
-        String cmd = banCmd.replace("%player%", player.getName()).replace("%code%", code);
-        getServer().dispatchCommand(getServer().getConsoleSender(), cmd);
-        getLogger().info("封禁 " + player.getName() + " 封禁码: " + code + " 原因: " + reason);
-    }
+    // ------------------------------------------------------------------
+    // 命令
+    // ------------------------------------------------------------------
 
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
@@ -373,6 +331,7 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
         if (args.length == 0) {
             sender.sendMessage("§e/ac report <玩家> §7- AI 分析玩家行为");
             sender.sendMessage("§e/ac lookup <封禁码> §7- 查看违规记录详情");
+            sender.sendMessage("§e/ac update §7- 检查更新并同步最新模型");
             sender.sendMessage("§e/ac reload §7- 重载配置");
             return true;
         }
@@ -401,10 +360,28 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
                 }
                 handleLookup(sender, args[1]);
                 break;
+            case "update":
+                sender.sendMessage("§6正在检查更新并同步最新模型...");
+                updateManager.checkVersionAsync();
+                updateManager.downloadModelAsync().thenRun(() ->
+                        Bukkit.getScheduler().runTask(this, () ->
+                                sender.sendMessage("§a更新检查完成，模型已同步到最新。")));
+                break;
             default:
                 sender.sendMessage("§c未知子命令。");
         }
         return true;
+    }
+
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command cmd, String alias, String[] args) {
+        if (args.length == 1) {
+            return Arrays.asList("report", "lookup", "reload", "update");
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("report")) {
+            return null;
+        }
+        return Collections.emptyList();
     }
 
     private void handleReport(CommandSender sender, Player target) {
@@ -412,8 +389,8 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
             sender.sendMessage("§cAI 引擎未启用。");
             return;
         }
-        BehaviorRecorder rec = recorders.get(target.getUniqueId());
-        if (rec == null) {
+        TrackedPlayer tracked = trackedPlayers.get(target.getUniqueId());
+        if (tracked == null) {
             sender.sendMessage("§c该玩家尚无足够数据。");
             return;
         }
@@ -425,7 +402,7 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
             sender.sendMessage("§c作弊概率: §f" + String.format("%.1f%%", cheatProb * 100));
             if (cheatProb >= autoPunishThreshold) {
                 sender.sendMessage("§c⚠ 高度疑似作弊，已自动处理。");
-                smartPunish(target, "AI举报分析：高度疑似作弊");
+                getPunishmentManager().handleViolation(target, tracked, "AI举报分析：高度疑似作弊");
             } else if (cheatProb >= alertThreshold) {
                 sender.sendMessage("§e⚠ 可疑行为，请管理员人工观察。");
             } else {
@@ -479,42 +456,59 @@ public class AntiCheatPlugin extends JavaPlugin implements Listener {
         }
     }
 
-    private void analyzePlayerAsync(Player player) {
-        analyzePlayerAsync(player, probs -> {
-            float cheatProb = probs[1];
-            if (cheatProb >= autoPunishThreshold) {
-                smartPunish(player, "AI 定时检测：高度疑似作弊");
-            } else if (cheatProb >= alertThreshold) {
-                String msg = String.format("§e[AC] §c%s §7AI 定时检测：可疑行为 (%.1f%%)",
-                        player.getName(), cheatProb * 100);
-                for (Player p : getServer().getOnlinePlayers()) {
-                    if (p.hasPermission("deepguard.admin")) p.sendMessage(msg);
-                }
-                getLogger().info(ChatColor.stripColor(msg));
-            }
-        });
+    // ------------------------------------------------------------------
+    // 供检查 / 处罚管理器读取的配置
+    // ------------------------------------------------------------------
+
+    public PunishmentManager getPunishmentManager() {
+        return punishmentManager;
     }
 
-    private void analyzePlayerAsync(Player player, java.util.function.Consumer<float[]> callback) {
-        BehaviorRecorder rec = recorders.get(player.getUniqueId());
-        if (rec == null) return;
-        BehaviorRecorder.BehaviorTick[] ticks = rec.getRecentTicks(analysisSeconds * 20);
-        if (ticks.length < 100) return;
-        float[][][] image = BehaviorImageBuilder.buildImage(ticks);
-        CompletableFuture.supplyAsync(() -> aiEngine.infer(image))
-                .thenAccept(probs -> {
-                    Bukkit.getScheduler().runTask(this, () -> callback.accept(probs));
-                });
+    public boolean isFlyCheckEnabled() {
+        return flyCheck;
     }
 
-    @Override
-    public List<String> onTabComplete(CommandSender sender, Command cmd, String alias, String[] args) {
-        if (args.length == 1) {
-            return Arrays.asList("report", "lookup", "reload");
-        }
-        if (args.length == 2 && args[0].equalsIgnoreCase("report")) {
-            return null;
-        }
-        return Collections.emptyList();
+    public boolean isBoatSpeedCheckEnabled() {
+        return boatSpeedCheck;
+    }
+
+    public boolean isSpeedCheckEnabled() {
+        return speedCheckEnabled;
+    }
+
+    public double getMaxBoatSpeed() {
+        return maxBoatSpeed;
+    }
+
+    public double getMaxSpeed() {
+        return maxSpeed;
+    }
+
+    public String getApPlaceholder() {
+        return apPlaceholder;
+    }
+
+    public boolean isPapiEnabled() {
+        return papiEnabled;
+    }
+
+    public String getSpeedPunishCommand() {
+        return speedPunishCommand;
+    }
+
+    public String getPunishCommand() {
+        return punishCmd;
+    }
+
+    public String getBanCommand() {
+        return banCmd;
+    }
+
+    public int getAnalysisSeconds() {
+        return analysisSeconds;
+    }
+
+    public File getViolationsFolder() {
+        return violationsFolder;
     }
 }
