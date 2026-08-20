@@ -7,7 +7,7 @@
 
     <groupId>com.gfish</groupId>
     <artifactId>DeepGuard</artifactId>
-    <version>1.0</version>
+    <version>1.6.1</version>
     <packaging>jar</packaging>
 
     <properties>
