@@ -1,12 +1,19 @@
 name: 发布 Release
 
-# 打 tag (v*) 或手动触发时发布，附带插件 jar 与 AI 模型。
-# 插件启动时自动从 latest release 下载模型，因此模型会随发布一起更新。
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      bump_type:
+        description: '版本递增类型'
+        required: true
+        type: choice
+        options:
+          - minor
+          - major
+          - hotfix
 
 permissions:
   contents: write
@@ -15,14 +22,80 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - name: 检出代码
+      - name: 检出代码（含完整历史）
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: 设置 JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
+
+      - name: 计算新版本号
+        id: version
+        run: |
+          # 从最新 tag 读取当前版本
+          LATEST_TAG=$(git tag --sort=-v:refname | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            CUR_MAJOR=1; CUR_MINOR=0; CUR_PATCH=0
+          else
+            VER="${LATEST_TAG#v}"
+            CUR_MAJOR=$(echo "$VER" | cut -d. -f1)
+            CUR_MINOR=$(echo "$VER" | cut -d. -f2)
+            CUR_PATCH=$(echo "$VER" | cut -d. -f3)
+            [ -z "$CUR_PATCH" ] && CUR_PATCH=0
+          fi
+          echo "当前版本: ${CUR_MAJOR}.${CUR_MINOR}.${CUR_PATCH}"
+
+          BUMP="${{ github.event.inputs.bump_type }}"
+
+          # 如果是 tag 推送（非手动触发），不递增，直接用 tag
+          if [ -z "$BUMP" ]; then
+            NEW_VER="${LATEST_TAG#v}"
+          else
+            case "$BUMP" in
+              major)
+                NEW_MAJOR=$((CUR_MAJOR + 1))
+                NEW_VER="${NEW_MAJOR}.0.0"
+                ;;
+              minor)
+                NEW_MINOR=$((CUR_MINOR + 1))
+                NEW_VER="${CUR_MAJOR}.${NEW_MINOR}.0"
+                ;;
+              hotfix)
+                NEW_PATCH=$((CUR_PATCH + 1))
+                NEW_VER="${CUR_MAJOR}.${CUR_MINOR}.${NEW_PATCH}"
+                ;;
+            esac
+          fi
+
+          TAG="v${NEW_VER}"
+          echo "新版本: ${TAG}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${NEW_VER}" >> "$GITHUB_OUTPUT"
+
+      - name: 更新 pom.xml 版本号
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          VER="${{ steps.version.outputs.version }}"
+          # 根 pom.xml
+          sed -i "0,/<version>[^<]*<\/version>/{s/<version>[^<]*<\/version>/<version>${VER}<\/version>/}" pom.xml
+          # AntiCheat/pom.xml 的 artifactId 版本
+          sed -i "/<artifactId>DeepGuard<\/artifactId>/{n;s/<version>[^<]*<\/version>/<version>${VER}<\/version>/;}" AntiCheat/pom.xml
+          # plugin.yml
+          sed -i "s/^version: .*/version: ${VER}/" AntiCheat/src/main/resources/plugin.yml 2>/dev/null || true
+
+      - name: 提交版本变更并打 tag
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pom.xml AntiCheat/pom.xml AntiCheat/src/main/resources/plugin.yml
+          git commit -m "release: bump version to ${TAG}"
+          git tag "${TAG}"
+          git push origin HEAD --tags
 
       - name: 构建全部模块
         run: mvn -B clean package
@@ -33,19 +106,94 @@ jobs:
           test -f recorder-plugin/target/BehaviorRecorder.jar
           test -f AntiCheat/src/main/resources/scaffold_detector.onnx
 
+      - name: 生成详细 Release Notes
+        id: notes
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+
+          # 找到上一个 tag
+          PREV_TAG=$(git tag --sort=-v:refname | grep -A1 "^${TAG}$" | tail -1)
+          if [ "${PREV_TAG}" = "${TAG}" ] || [ -z "${PREV_TAG}" ]; then
+            PREV_TAG=$(git rev-list --max-parents=0 HEAD | head -1)
+          fi
+
+          # 按 conventional commits 前缀分类
+          FEATURES=""
+          FIXES=""
+          ARCH=""
+          OTHERS=""
+
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            prefix=$(echo "$line" | grep -oE '^(feat|fix|refactor|perf|style|docs|test|build|ci|chore)(\(.+\))?' | head -1)
+            case "$prefix" in
+              feat*)                FEATURES="${FEATURES}\n- ${line}" ;;
+              fix*)                 FIXES="${FIXES}\n- ${line}" ;;
+              refactor*|perf*)      ARCH="${ARCH}\n- ${line}" ;;
+              *)                    OTHERS="${OTHERS}\n- ${line}" ;;
+            esac
+          done <<< "$(git log --pretty=format:'%s' "${PREV_TAG}..${TAG}" 2>/dev/null || git log --pretty=format:'%s')"
+
+          # 拼装 Notes
+          NOTES_FILE=$(mktemp)
+          {
+            echo "## DeepGuard ${TAG}"
+            echo ""
+            echo "### 产物说明"
+            echo "| 文件 | 说明 |"
+            echo "|------|------|"
+            echo "| DeepGuard.jar | 主反作弊插件，放入服务器 plugins/ 目录 |"
+            echo "| BehaviorRecorder.jar | 行为录制插件，用于采集训练数据 |"
+            echo "| scaffold_detector.onnx | AI 模型文件（插件启动时也会自动下载） |"
+            echo ""
+
+            if [ -n "$FEATURES" ]; then
+              echo "### 新功能"
+              echo -e "$FEATURES"
+              echo ""
+            fi
+
+            if [ -n "$FIXES" ]; then
+              echo "### Bug 修复"
+              echo -e "$FIXES"
+              echo ""
+            fi
+
+            if [ -n "$ARCH" ]; then
+              echo "### 架构 / 重构"
+              echo -e "$ARCH"
+              echo ""
+            fi
+
+            if [ -n "$OTHERS" ]; then
+              echo "### 其他变更"
+              echo -e "$OTHERS"
+              echo ""
+            fi
+
+            echo "### 安装与更新"
+            echo "1. 下载 DeepGuard.jar 放入服务器 plugins/ 目录"
+            echo "2. 重启服务器，插件会自动加载内置模型"
+            echo "3. 如已安装旧版，直接替换 jar 即可；模型会自动更新"
+            echo ""
+            echo "### 完整变更列表"
+            git log --pretty=format:'- %s (%h)' "${PREV_TAG}..${TAG}" 2>/dev/null || git log --pretty=format:'- %s (%h)'
+          } > "$NOTES_FILE"
+
+          echo "notes_file=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
+
       - name: 创建/更新 Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION=$(grep -m1 '<version>' pom.xml | sed 's/.*<version>\(.*\)<\/version>.*/\1/')
-          TAG="v${VERSION}"
-          if [ "${{ github.ref_type }}" = "tag" ]; then TAG="${{ github.ref_name }}"; fi
-          echo "发布 tag: ${TAG}"
+          TAG="${{ steps.version.outputs.tag }}"
+          NOTES_FILE="${{ steps.notes.outputs.notes_file }}"
           gh release create "${TAG}" \
             AntiCheat/target/DeepGuard.jar \
             recorder-plugin/target/BehaviorRecorder.jar \
             AntiCheat/src/main/resources/scaffold_detector.onnx \
-            --title "DeepGuard ${TAG}" --generate-notes 2>/dev/null \
+            --title "DeepGuard ${TAG}" \
+            --notes-file "${NOTES_FILE}" 2>/dev/null \
             || { echo "Release 已存在，更新产物"; \
                  gh release upload "${TAG}" \
                    AntiCheat/target/DeepGuard.jar \
