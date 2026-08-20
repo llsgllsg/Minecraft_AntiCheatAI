@@ -106,8 +106,18 @@ def main():
 
     X_path, y_path = os.path.join(args.data, 'X.npy'), os.path.join(args.data, 'y.npy')
     if not (os.path.exists(X_path) and os.path.exists(y_path)):
-        print(f'错误: 未找到 {X_path} 与 {y_path}，请先运行 prepare_data.py')
-        sys.exit(1)
+        print('未找到 X.npy / y.npy，自动调用 prepare_data.py 生成...')
+        import subprocess
+        raw_dir = os.path.join(args.data, 'data')
+        if not os.path.isdir(raw_dir):
+            # 向上一级找 data/ 目录
+            raw_dir = os.path.join(os.path.dirname(args.data), 'data')
+        if os.path.isdir(raw_dir):
+            subprocess.check_call([sys.executable, 'prepare_data.py', raw_dir, '--out', args.data])
+        else:
+            print(f'错误: 未找到 X.npy / y.npy，也未找到 raw data 目录 ({raw_dir})')
+            print('请把 jsonl 样本放入 data/normal/ 与 data/cheat/ 目录，或先运行 prepare_data.py')
+            sys.exit(1)
 
     print('加载数据...')
     X = np.load(X_path)
