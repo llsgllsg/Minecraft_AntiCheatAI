@@ -1,0 +1,22 @@
+# Maven
+target/
+*.class
+dependency-reduced-pom.xml
+
+# Python 训练产物（不提交模型与中间数据）
+python/data/
+*.npy
+*.pth
+*.onnx
+training_curves.png
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db

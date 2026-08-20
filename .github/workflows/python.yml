@@ -1,0 +1,65 @@
+name: Python 管线检查
+
+# 每次 push（任意分支）与 Pull Request 自动运行
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: python/requirements.txt
+
+      - name: 安装轻量依赖（特征测试仅需 numpy）
+        run: pip install numpy
+
+      # 特征工程单元测试：验证与 Java 端 BehaviorImageBuilder 的契约
+      - name: 运行特征工程单元测试
+        working-directory: python
+        run: python test_features.py
+
+      # 语法检查全部脚本（不安装 torch/onnx 等重依赖）
+      - name: 语法检查全部脚本
+        working-directory: python
+        run: |
+          python -m py_compile features.py prepare_data.py train_model.py predict_one.py test_features.py
+
+      # prepare_data 帮助信息可正常输出
+      - name: prepare_data 冒烟
+        working-directory: python
+        run: python prepare_data.py --help
+
+  # 完整训练需要真实录制的数据（仓库不包含样本），此处只做可选的手工触发验证
+  train:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装完整依赖
+        run: pip install -r python/requirements.txt
+
+      - name: 训练冒烟（需通过秘密/artifact 提供真实 X.npy/y.npy）
+        working-directory: python
+        run: |
+          if [ -f X.npy ] && [ -f y.npy ]; then
+            python train_model.py --quick
+          else
+            echo "未提供训练数据 X.npy/y.npy，跳过训练。"
+          fi
