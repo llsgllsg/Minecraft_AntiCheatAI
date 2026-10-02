@@ -19,6 +19,8 @@
 """
 
 import argparse
+import datetime
+import hashlib
 import os
 import random
 import sys
@@ -153,6 +155,7 @@ def main():
 
     best_val_loss = float('inf')
     early_stop_counter = 0
+    epochs_run = 0
     train_losses, val_losses = [], []
 
     print(f'开始训练 (epochs={epochs}, 早停 patience={patience})...')
@@ -189,6 +192,7 @@ def main():
         print(f'Epoch {epoch + 1:3d}: Train Loss {train_loss:.4f}, '
               f'Val Loss {val_loss:.4f}, Val Acc {val_acc:.4f}')
 
+        epochs_run = epoch + 1
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), 'best_model.pth')
@@ -218,10 +222,14 @@ def main():
     y_pred = np.array(all_preds)
     y_prob = np.array(all_probs)[:, 1]
     y_true = np.array(all_labels)
+    test_report = classification_report(y_true, y_pred, target_names=['Normal', 'Cheat'],
+                                        zero_division=0)
     print('\n测试集报告:')
-    print(classification_report(y_true, y_pred, target_names=['Normal', 'Cheat']))
+    print(test_report)
+    auc = None
     if len(np.unique(y_true)) > 1:
-        print('AUC:', roc_auc_score(y_true, y_prob))
+        auc = float(roc_auc_score(y_true, y_prob))
+        print('AUC:', auc)
 
     plt.figure(figsize=(12, 4))
     plt.subplot(1, 2, 1)
@@ -242,6 +250,74 @@ def main():
         dynamic_axes={'behavior_sequence': {0: 'batch_size'}},
         opset_version=12, dynamo=False)
     print('ONNX 模型已保存为 scaffold_detector.onnx')
+
+    write_training_report(
+        'training_report.md',
+        model_path='scaffold_detector.onnx',
+        device=str(device),
+        n_total=len(X), n_cheat=int(np.sum(y == 1)),
+        n_train=len(X_train), n_val=len(X_val), n_test=len(X_test),
+        epochs_run=epochs_run, epochs_limit=epochs,
+        best_val_loss=best_val_loss, final_train_loss=train_losses[-1],
+        test_report=test_report, auc=auc,
+        batch_size=args.batch_size, lr=0.000006, seed=args.seed,
+        duration=time.time() - start_time)
+
+
+def _sha256_prefix(path, length=12):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            digest.update(chunk)
+    return digest.hexdigest()[:length]
+
+
+def write_training_report(out_path, **m):
+    """写出训练报告（Markdown）。Release 工作流会把它内联进 Release Notes 并作为产物上传。
+
+    报告描述的是本次训练导出的那个模型，附上 ONNX 的 sha256 前缀，
+    便于核对线上模型与报告是否对应。
+    """
+    auc_line = f'{m["auc"]:.4f}' if m['auc'] is not None else '不可用（测试集只有单一类别）'
+    stopped = '（提前停止）' if m['epochs_run'] < m['epochs_limit'] else ''
+    text = f"""# DeepGuard 模型训练报告
+
+- 训练时间：{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+- 训练设备：{m['device']}
+- 耗时：{m['duration']:.1f} 秒
+
+## 数据
+
+- 样本总数：{m['n_total']}（正常 {m['n_total'] - m['n_cheat']} / 作弊 {m['n_cheat']}）
+- 划分：训练 {m['n_train']} / 验证 {m['n_val']} / 测试 {m['n_test']}
+- 特征图形状：(12, 128)，与 `features.py` / `BehaviorImageBuilder.java` 逐位一致
+
+## 超参数
+
+- 训练轮数：{m['epochs_run']} / {m['epochs_limit']}{stopped}
+- batch size：{m['batch_size']}，学习率：{m['lr']}，随机种子：{m['seed']}
+- 优化器：Adam + ReduceLROnPlateau
+
+## 训练结果
+
+- 最佳验证损失：{m['best_val_loss']:.4f}
+- 最后一个 epoch 的训练损失：{m['final_train_loss']:.4f}
+- 测试集 AUC：{auc_line}
+
+测试集分类报告：
+
+```
+{m['test_report'].rstrip()}
+```
+
+## 产物
+
+- `scaffold_detector.onnx` — sha256 前 12 位：`{_sha256_prefix(m['model_path'])}`
+- `training_curves.png` — 损失曲线
+"""
+    with open(out_path, 'w', encoding='utf-8') as f:
+        f.write(text)
+    print(f'已保存训练报告 {out_path}')
 
 
 if __name__ == '__main__':

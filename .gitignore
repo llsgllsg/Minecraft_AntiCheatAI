@@ -13,10 +13,12 @@ __pycache__/
 .venv/
 venv/
 
-# 允许提交：训练特征数据与部署模型
+# 允许提交：训练特征数据、部署模型，以及随模型一起发布的训练曲线与训练报告
 !python/X.npy
 !python/y.npy
 !AntiCheat/src/main/resources/scaffold_detector.onnx
+!python/training_curves.png
+!python/training_report.md
 
 # IDE / OS
 .idea/

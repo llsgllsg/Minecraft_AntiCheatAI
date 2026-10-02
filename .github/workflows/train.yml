@@ -39,7 +39,10 @@ jobs:
           git config user.name "llsgllsg"
           git config user.email "151439431+llsgllsg@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-          git add AntiCheat/src/main/resources/scaffold_detector.onnx
+          # 曲线与报告和模型是同一次训练的产物，一起提交，保证发布时三者一致
+          git add AntiCheat/src/main/resources/scaffold_detector.onnx \
+                  python/training_curves.png \
+                  python/training_report.md
           git commit -m "chore: 重新训练更新模型" || echo "模型无变化"
           git push origin "HEAD:${GITHUB_REF_NAME}"
 
@@ -50,4 +53,5 @@ jobs:
           path: |
             python/scaffold_detector.onnx
             python/training_curves.png
+            python/training_report.md
           if-no-files-found: error

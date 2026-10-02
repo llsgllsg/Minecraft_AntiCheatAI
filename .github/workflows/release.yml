@@ -133,6 +133,16 @@ jobs:
           test -f recorder-plugin/target/BehaviorRecorder.jar
           test -f AntiCheat/src/main/resources/scaffold_detector.onnx
 
+          # 训练曲线 / 训练报告由「重新训练模型」工作流产出并提交；
+          # 尚未训练过时只提示，不因此让发布失败。
+          for f in python/training_curves.png python/training_report.md; do
+            if [ -f "$f" ]; then
+              echo "找到训练产物: $f"
+            else
+              echo "::warning::缺少训练产物 $f，本次 Release 不会附带（请先运行「重新训练模型」工作流）"
+            fi
+          done
+
       - name: 生成详细 Release Notes
         id: notes
         run: |
@@ -172,6 +182,12 @@ jobs:
             echo "| DeepGuard.jar | 主反作弊插件，放入服务器 plugins/ 目录 |"
             echo "| BehaviorRecorder.jar | 行为录制插件，用于采集训练数据 |"
             echo "| scaffold_detector.onnx | AI 模型文件（插件启动时也会自动下载） |"
+            if [ -f python/training_curves.png ]; then
+              echo "| training_curves.png | AI 模型训练曲线 |"
+            fi
+            if [ -f python/training_report.md ]; then
+              echo "| training_report.md | AI 模型训练报告（数据 / 超参数 / 指标） |"
+            fi
             echo ""
 
             if [ -n "$FEATURES" ]; then
@@ -198,6 +214,20 @@ jobs:
               echo ""
             fi
 
+            # 训练曲线 + 训练报告（由「重新训练模型」工作流产出并提交）
+            if [ -f python/training_report.md ]; then
+              echo "### AI 模型训练结果"
+              echo ""
+              if [ -f python/training_curves.png ]; then
+                echo "![训练曲线](https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/training_curves.png)"
+                echo ""
+              fi
+              # 报告自带一级标题，去掉首行后作为本节正文；
+              # 二级标题降为四级，避免和 Release Notes 自身的标题同级。
+              tail -n +2 python/training_report.md | sed 's/^## /#### /'
+              echo ""
+            fi
+
             echo "### 安装与更新"
             echo "1. 下载 DeepGuard.jar 放入服务器 plugins/ 目录"
             echo "2. 重启服务器，插件会自动加载内置模型"
@@ -215,15 +245,26 @@ jobs:
         run: |
           TAG="${{ steps.version.outputs.tag }}"
           NOTES_FILE="${{ steps.notes.outputs.notes_file }}"
-          gh release create "${TAG}" \
-            AntiCheat/target/DeepGuard.jar \
-            recorder-plugin/target/BehaviorRecorder.jar \
-            AntiCheat/src/main/resources/scaffold_detector.onnx \
-            --title "DeepGuard ${TAG}" \
-            --notes-file "${NOTES_FILE}" 2>/dev/null \
-            || { echo "Release 已存在，更新产物"; \
-                 gh release upload "${TAG}" \
-                   AntiCheat/target/DeepGuard.jar \
-                   recorder-plugin/target/BehaviorRecorder.jar \
-                   AntiCheat/src/main/resources/scaffold_detector.onnx \
-                   --clobber; }
+
+          ASSETS=(
+            AntiCheat/target/DeepGuard.jar
+            recorder-plugin/target/BehaviorRecorder.jar
+            AntiCheat/src/main/resources/scaffold_detector.onnx
+          )
+          # 训练曲线 / 报告存在才附带（未训练过时不至于让发布失败）
+          for extra in python/training_curves.png python/training_report.md; do
+            if [ -f "$extra" ]; then
+              ASSETS+=("$extra")
+            else
+              echo "跳过缺失的训练产物: $extra"
+            fi
+          done
+
+          if gh release create "${TAG}" "${ASSETS[@]}" \
+               --title "DeepGuard ${TAG}" \
+               --notes-file "${NOTES_FILE}"; then
+            echo "Release ${TAG} 创建完成"
+          else
+            echo "Release 已存在，改为更新产物"
+            gh release upload "${TAG}" "${ASSETS[@]}" --clobber
+          fi
