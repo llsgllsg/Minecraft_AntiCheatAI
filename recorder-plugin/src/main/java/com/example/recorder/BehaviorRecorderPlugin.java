@@ -234,6 +234,8 @@ public class BehaviorRecorderPlugin extends JavaPlugin implements Listener {
             }
         }
 
+        /** 落盘并清空缓冲区。保存后必须清空：残留的 tick 会在下次切换标签时
+         *  被重复写入，并被错误地打上新的标签，污染训练数据。 */
         private void saveBufferToFile() {
             if (buffer.isEmpty()) return;
 
@@ -251,6 +253,8 @@ public class BehaviorRecorderPlugin extends JavaPlugin implements Listener {
                 }
             } catch (IOException e) {
                 plugin.getLogger().warning("保存录制文件失败: " + e.getMessage());
+            } finally {
+                buffer.clear();
             }
         }
     }

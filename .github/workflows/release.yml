@@ -36,37 +36,39 @@ jobs:
       - name: 计算新版本号
         id: version
         run: |
-          # 从最新 tag 读取当前版本
+          # 当前版本：优先取最新 tag；仓库尚无 tag 时回退到 pom.xml 的版本，
+          # 否则会把已有版本当成 1.0.0 重新算出同一个版本号，导致后续提交为空而失败。
           LATEST_TAG=$(git tag --sort=-v:refname | head -1)
-          if [ -z "$LATEST_TAG" ]; then
-            CUR_MAJOR=1; CUR_MINOR=0; CUR_PATCH=0
+          if [ -n "$LATEST_TAG" ]; then
+            CUR_VER="${LATEST_TAG#v}"
           else
-            VER="${LATEST_TAG#v}"
-            CUR_MAJOR=$(echo "$VER" | cut -d. -f1)
-            CUR_MINOR=$(echo "$VER" | cut -d. -f2)
-            CUR_PATCH=$(echo "$VER" | cut -d. -f3)
-            [ -z "$CUR_PATCH" ] && CUR_PATCH=0
+            CUR_VER=$(grep -m1 '<version>' pom.xml | sed -E 's/.*<version>([^<]*)<\/version>.*/\1/')
+            echo "仓库尚无 tag，以 pom.xml 版本 ${CUR_VER} 作为基线"
           fi
+
+          CUR_MAJOR=$(echo "$CUR_VER" | cut -d. -f1); CUR_MAJOR=${CUR_MAJOR:-1}
+          CUR_MINOR=$(echo "$CUR_VER" | cut -d. -f2); CUR_MINOR=${CUR_MINOR:-0}
+          CUR_PATCH=$(echo "$CUR_VER" | cut -d. -f3); CUR_PATCH=${CUR_PATCH:-0}
           echo "当前版本: ${CUR_MAJOR}.${CUR_MINOR}.${CUR_PATCH}"
 
           BUMP="${{ github.event.inputs.bump_type }}"
 
           # 如果是 tag 推送（非手动触发），不递增，直接用 tag
           if [ -z "$BUMP" ]; then
-            NEW_VER="${LATEST_TAG#v}"
+            NEW_VER="${CUR_VER}"
           else
             case "$BUMP" in
               major)
-                NEW_MAJOR=$((CUR_MAJOR + 1))
-                NEW_VER="${NEW_MAJOR}.0.0"
+                NEW_VER="$((CUR_MAJOR + 1)).0.0"
                 ;;
               minor)
-                NEW_MINOR=$((CUR_MINOR + 1))
-                NEW_VER="${CUR_MAJOR}.${NEW_MINOR}.0"
+                NEW_VER="${CUR_MAJOR}.$((CUR_MINOR + 1)).0"
                 ;;
               hotfix)
-                NEW_PATCH=$((CUR_PATCH + 1))
-                NEW_VER="${CUR_MAJOR}.${CUR_MINOR}.${NEW_PATCH}"
+                NEW_VER="${CUR_MAJOR}.${CUR_MINOR}.$((CUR_PATCH + 1))"
+                ;;
+              *)
+                echo "未知的 bump_type: ${BUMP}"; exit 1
                 ;;
             esac
           fi
@@ -78,24 +80,44 @@ jobs:
 
       - name: 更新 pom.xml 版本号
         run: |
-          TAG="${{ steps.version.outputs.tag }}"
           VER="${{ steps.version.outputs.version }}"
-          # 根 pom.xml
+          CUR_POM=$(grep -m1 '<version>' pom.xml | sed -E 's/.*<version>([^<]*)<\/version>.*/\1/')
+          if [ "$VER" = "$CUR_POM" ]; then
+            echo "pom.xml 已是 ${VER}，无需写入版本号"
+            exit 0
+          fi
+          # 根 pom.xml 的 project 版本（第一个 <version>）
           sed -i "0,/<version>[^<]*<\/version>/{s/<version>[^<]*<\/version>/<version>${VER}<\/version>/}" pom.xml
           # AntiCheat/pom.xml 的 artifactId 版本
           sed -i "/<artifactId>DeepGuard<\/artifactId>/{n;s/<version>[^<]*<\/version>/<version>${VER}<\/version>/;}" AntiCheat/pom.xml
           # plugin.yml
-          sed -i "s/^version: .*/version: ${VER}/" AntiCheat/src/main/resources/plugin.yml 2>/dev/null || true
+          sed -i "s/^version: .*/version: ${VER}/" AntiCheat/src/main/resources/plugin.yml
 
       - name: 提交版本变更并打 tag
         run: |
           TAG="${{ steps.version.outputs.tag }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add pom.xml AntiCheat/pom.xml AntiCheat/src/main/resources/plugin.yml
-          git commit -m "release: bump version to ${TAG}"
-          git tag "${TAG}"
-          git push origin HEAD --tags
+          if git diff --cached --quiet; then
+            echo "版本号无变化，跳过提交"
+          else
+            git commit -m "release: bump version to ${TAG}"
+          fi
+
+          # tag 已存在（tag 推送触发时）不重复创建
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "tag ${TAG} 已存在，跳过创建"
+          else
+            git tag "${TAG}"
+          fi
+
+          # tag 推送触发时为 detached HEAD，此时只推 tag
+          if [ "${GITHUB_REF_TYPE:-branch}" = "branch" ]; then
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+          git push origin --tags
 
       - name: 构建全部模块
         run: mvn -B clean package

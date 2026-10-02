@@ -34,6 +34,7 @@ public final class TrackedPlayer {
     private Player player;
     private int flyWarnings;
     private Location lastSpeedLocation;
+    private long lastSpeedSampleTime;
     private boolean placingThisTick;
 
     public TrackedPlayer(Player player) {
@@ -75,6 +76,15 @@ public final class TrackedPlayer {
 
     public void setLastSpeedLocation(Location lastSpeedLocation) {
         this.lastSpeedLocation = lastSpeedLocation;
+    }
+
+    /** 上次速度采样的时间戳（毫秒）。必须每玩家一份，否则所有玩家会共用同一个降频计时。 */
+    public long getLastSpeedSampleTime() {
+        return lastSpeedSampleTime;
+    }
+
+    public void setLastSpeedSampleTime(long lastSpeedSampleTime) {
+        this.lastSpeedSampleTime = lastSpeedSampleTime;
     }
 
     // ---------- 豁免 ----------

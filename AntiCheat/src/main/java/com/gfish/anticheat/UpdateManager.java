@@ -3,12 +3,15 @@ package com.gfish.anticheat;
 import org.bukkit.entity.Player;
 
 import java.io.File;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 
@@ -95,17 +98,35 @@ public final class UpdateManager {
         String modelPath = plugin.getConfig().getString("ai.model-path", "scaffold_detector.onnx");
 
         return CompletableFuture.supplyAsync(() -> {
+            File model = new File(plugin.getDataFolder(), modelPath);
+            File parent = model.getParentFile();
+            if (parent != null) {
+                parent.mkdirs();
+            }
+            // 先下到临时文件，校验通过后再替换：直接写目标文件的话，
+            // 一次失败（例如 Release 尚未发布导致的 404）就会把现有模型删掉。
+            Path tmp = new File(parent, model.getName() + ".download").toPath();
             try {
-                File model = new File(plugin.getDataFolder(), modelPath);
                 HttpRequest req = HttpRequest.newBuilder(URI.create(url)).GET().build();
-                HttpResponse<Path> resp = http.send(req, HttpResponse.BodyHandlers.ofFile(model.toPath()));
+                HttpResponse<Path> resp = http.send(req, HttpResponse.BodyHandlers.ofFile(tmp,
+                        StandardOpenOption.CREATE,
+                        StandardOpenOption.WRITE,
+                        StandardOpenOption.TRUNCATE_EXISTING));
                 if (resp.statusCode() / 100 != 2) {
-                    Files.deleteIfExists(model.toPath());
                     throw new IllegalStateException("HTTP " + resp.statusCode());
                 }
+                if (Files.size(tmp) <= 0) {
+                    throw new IllegalStateException("下载内容为空");
+                }
+                Files.move(tmp, model.toPath(), StandardCopyOption.REPLACE_EXISTING);
                 plugin.getLogger().info("AI 模型自动下载成功 (" + (model.length() / 1024) + " KB)");
                 return model;
             } catch (Exception e) {
+                try {
+                    Files.deleteIfExists(tmp);
+                } catch (IOException ignored) {
+                    // 临时文件清理失败不影响主流程
+                }
                 throw new IllegalStateException("AI 模型下载失败: " + e.getMessage(), e);
             }
         }).thenRun(() -> {

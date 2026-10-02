@@ -18,7 +18,6 @@ public final class SpeedCheck implements Check {
     private static final long SAMPLE_INTERVAL_MS = 1000;
 
     private final AntiCheatPlugin plugin;
-    private long lastSampleTime;
 
     public SpeedCheck(AntiCheatPlugin plugin) {
         this.plugin = plugin;
@@ -33,11 +32,13 @@ public final class SpeedCheck implements Check {
     public void tick(Player player, TrackedPlayer tracked) {
         if (!plugin.isSpeedCheckEnabled()) return;
 
+        // 采样计时必须按玩家保存：本检查是所有玩家共用的单例，
+        // 若计时放在检查自身字段上，每秒钟只会有一个玩家被真正采样。
         long now = System.currentTimeMillis();
-        if (now - lastSampleTime < SAMPLE_INTERVAL_MS) {
+        if (now - tracked.getLastSpeedSampleTime() < SAMPLE_INTERVAL_MS) {
             return;
         }
-        lastSampleTime = now;
+        tracked.setLastSpeedSampleTime(now);
 
         if (tracked.isExemptAny(ExemptionType.TELEPORT, ExemptionType.VELOCITY)) {
             tracked.setLastSpeedLocation(null);

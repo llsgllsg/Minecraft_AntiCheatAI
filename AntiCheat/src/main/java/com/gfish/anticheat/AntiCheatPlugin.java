@@ -26,7 +26,9 @@ import org.bukkit.scheduler.BukkitRunnable;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -44,6 +46,9 @@ import java.util.concurrent.CompletableFuture;
  * {@link PunishmentManager}。AI 检测能力（行为录制 -> 特征图 -> ONNX 推理）完整保留。
  */
 public final class AntiCheatPlugin extends JavaPlugin implements Listener {
+
+    /** jar 内置模型资源名（与 train.yml 写回 AntiCheat/src/main/resources/ 的文件同名）。 */
+    private static final String BUILTIN_MODEL_RESOURCE = "scaffold_detector.onnx";
 
     private final Map<UUID, TrackedPlayer> trackedPlayers = new HashMap<>();
     private final List<Check> checks = new ArrayList<>();
@@ -265,9 +270,19 @@ public final class AntiCheatPlugin extends JavaPlugin implements Listener {
     public void loadAiModel() {
         if (!aiEnabled) return;
         File modelFile = new File(getDataFolder(), getConfig().getString("ai.model-path", "scaffold_detector.onnx"));
-        if (!modelFile.exists() && getResource("scaffold_detector.onnx") != null) {
-            saveResource("scaffold_detector.onnx", false);
-            getLogger().info("已从内置资源解压模型: " + modelFile.getName());
+        if (!modelFile.exists() && getResource(BUILTIN_MODEL_RESOURCE) != null) {
+            // 解压到配置指定的路径（ai.model-path 可以是子目录），
+            // 否则自定义路径下永远找不到模型。
+            File parent = modelFile.getParentFile();
+            if (parent != null) {
+                parent.mkdirs();
+            }
+            try (InputStream in = getResource(BUILTIN_MODEL_RESOURCE)) {
+                Files.copy(in, modelFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                getLogger().info("已从内置资源解压模型: " + modelFile.getPath());
+            } catch (IOException e) {
+                getLogger().warning("解压内置模型失败: " + e.getMessage());
+            }
         }
         if (modelFile.exists()) {
             if (aiEngine == null) {
@@ -300,6 +315,9 @@ public final class AntiCheatPlugin extends JavaPlugin implements Listener {
     }
 
     private void analyzePlayerAsync(Player player, java.util.function.Consumer<float[]> callback) {
+        // 模型缺失/加载失败时 aiEngine 为 null，定时扫描没有别的保护，必须在这里挡住
+        if (aiEngine == null) return;
+
         TrackedPlayer tracked = trackedPlayers.get(player.getUniqueId());
         if (tracked == null) return;
 
