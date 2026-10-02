@@ -88,8 +88,13 @@ jobs:
           fi
           # 根 pom.xml 的 project 版本（第一个 <version>）
           sed -i "0,/<version>[^<]*<\/version>/{s/<version>[^<]*<\/version>/<version>${VER}<\/version>/}" pom.xml
-          # AntiCheat/pom.xml 的 artifactId 版本
-          sed -i "/<artifactId>DeepGuard<\/artifactId>/{n;s/<version>[^<]*<\/version>/<version>${VER}<\/version>/;}" AntiCheat/pom.xml
+
+          # 子模块 <parent><version> 必须与父 POM 一致，否则 Maven 解析不到父 POM、
+          # 整个构建直接失败（子模块自身不再声明 <version>，版本由父 POM 继承）。
+          for child in AntiCheat/pom.xml recorder-plugin/pom.xml; do
+            sed -i "/<parent>/,/<\/parent>/{s|<version>[^<]*</version>|<version>${VER}</version>|;}" "$child"
+          done
+
           # plugin.yml
           sed -i "s/^version: .*/version: ${VER}/" AntiCheat/src/main/resources/plugin.yml
 
@@ -99,7 +104,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add pom.xml AntiCheat/pom.xml AntiCheat/src/main/resources/plugin.yml
+          git add pom.xml AntiCheat/pom.xml recorder-plugin/pom.xml AntiCheat/src/main/resources/plugin.yml
           if git diff --cached --quiet; then
             echo "版本号无变化，跳过提交"
           else
