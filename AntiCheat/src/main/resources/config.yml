@@ -13,7 +13,7 @@ movement:
   max-boat-speed: 12.0
   speed:
     enabled: true
-    max-speed: 5.0
+    max-speed: 150.0
     ap-placeholder: "%ap_moving:max%"
     command: "kick %player% §c你移动速度过快！"
 
