@@ -51,6 +51,9 @@ updates:
   model-url: "https://github.com/llsgllsg/Minecraft_AntiCheatAI/releases/latest/download/scaffold_detector.onnx"
 ```
 
+数据与模型是分开的两步工作流：**导入录制数据** 负责 jsonl → `python/X.npy` / `python/y.npy`，
+**重新训练模型** 负责特征集 → ONNX 模型。
+
 重新训练模型：在 GitHub Actions 的 **Actions → 重新训练模型** 手动触发，会用仓库内
 已提交的特征数据（`python/X.npy` / `python/y.npy`）重训并把新模型提交回仓库、
 上传产物。打 `v*` tag 或手动触发 **发布 Release** 工作流即可让所有服务器自动同步到
@@ -106,13 +109,26 @@ GitHub Actions 会在每次 push / PR 自动构建并运行 Python 特征测试�
 - 使用 `/record cheat` / `/record normal` 手动采集作弊 / 正常样本（标签 1 / 0）
 - 数据保存在 `plugins/BehaviorRecorder/recordings/`
 
-### 2. 预处理数据
+### 2. 预处理数据（jsonl → 特征集）
+
+把 jsonl 按标签放进 `python/recordings/normal/` 与 `python/recordings/cheat/`，
+提交（网页拖拽上传也行）即会自动触发 **导入录制数据** 工作流，把它们编码成
+(12, 128) 特征图并增量合并进 `python/X.npy` / `python/y.npy`，再把特征集提交回仓库。
+也可以在 Actions 页面手动触发。
+
+合并是**幂等**的：已处理过的 jsonl 会被去重跳过，重复上传不会把样本算两次。
+少于 100 行的文件按管线约定跳过。详见 `python/recordings/README.md`。
+
+本地环境也可以用同一个脚本：
 
 ```bash
 pip install -r python/requirements.txt
-python python/prepare_data.py 数据目录/ --out ./
-# 数据目录下应包含 normal/ 与 cheat/ 两个子文件夹
+python python/merge_recordings.py python/recordings --data python
 ```
+
+> `prepare_data.py` 是**全量重建**（从原始 jsonl 重新生成整个特征集）。
+> 仓库内更早的样本没有保留原始 jsonl，用它会丢掉那部分数据，
+> 日常加数据请走上面的增量合并。
 
 ### 3. 训练模型
 

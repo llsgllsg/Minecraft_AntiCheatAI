@@ -2,23 +2,21 @@
 
 与 prepare_data.py 的区别：prepare_data 从原始 jsonl 全量重建特征集，
 本脚本用于「已有特征集 + 新录制」的增量追加，旧样本按位保留不变。
+仓库里的原始 jsonl 常驻 python/recordings/，本脚本对它可重复执行——
+已合并过的文件会因特征图完全相同而被去重跳过，因此是幂等的。
 
 用法:
-    python merge_recordings.py <新录制目录> [--data .] [--archive] [--dry-run]
+    python merge_recordings.py <录制目录> [--data .] [--dry-run]
 
 标签推断与 prepare_data.py 一致：
     - 目录名为 normal/  → 0，cheat*/  → 1
     - 否则取文件名尾缀 <uuid>_<ts>_<label>.jsonl 的 label
     - 少于 MIN_TICKS 行的文件跳过（与 Java 端 analyzePlayerAsync 阈值一致）
-
---archive 会把实际合并进去的 jsonl 复制到 <data>/data/{normal,cheat}/ 归档，
-便于日后从原始数据全量重建（该目录已被 .gitignore 忽略）。
 """
 
 import argparse
 import glob
 import os
-import shutil
 import sys
 
 for _s in (sys.stdout, sys.stderr):
@@ -37,8 +35,6 @@ def main():
     parser = argparse.ArgumentParser(description='增量合并新录制到 X.npy/y.npy')
     parser.add_argument('recordings_dir', help='新录制目录（recorder-plugin 的 recordings/）')
     parser.add_argument('--data', default='.', help='已有 X.npy / y.npy 所在目录（默认当前目录）')
-    parser.add_argument('--archive', action='store_true',
-                        help='把合并的 jsonl 归档到 <data>/data/{normal,cheat}/')
     parser.add_argument('--dry-run', action='store_true', help='只统计不写盘')
     args = parser.parse_args()
 
@@ -63,7 +59,7 @@ def main():
     files = sorted(glob.glob(os.path.join(args.recordings_dir, '**', '*.jsonl'), recursive=True)
                    + glob.glob(os.path.join(args.recordings_dir, '**', '*.json'), recursive=True))
 
-    new_X, new_y, merged_files = [], [], []
+    new_X, new_y = [], []
     dup = short = unlabeled = 0
     for path in files:
         label = label_for_file(path, args.recordings_dir)
@@ -84,7 +80,6 @@ def main():
         seen.add(img.tobytes())
         new_X.append(img)
         new_y.append(label)
-        merged_files.append((path, label))
 
     if not new_X:
         print(f'没有可合并的新样本（重复 {dup}，过短 {short}，无标签 {unlabeled}）')
@@ -109,18 +104,6 @@ def main():
     np.save(x_path, X)
     np.save(y_path, y)
     print(f'已写入 {x_path} / {y_path}')
-
-    if args.archive:
-        for path, label in merged_files:
-            sub = 'cheat' if label == 1 else 'normal'
-            dest_dir = os.path.join(args.data, 'data', sub)
-            os.makedirs(dest_dir, exist_ok=True)
-            dest = os.path.join(dest_dir, os.path.basename(path))
-            if os.path.exists(dest):
-                print(f'归档已存在，跳过: {dest}')
-                continue
-            shutil.copy2(path, dest)
-        print(f'已归档 {len(merged_files)} 个 jsonl 到 {os.path.join(args.data, "data")}/')
 
 
 if __name__ == '__main__':
