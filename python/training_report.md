@@ -1,8 +1,8 @@
 # DeepGuard 模型训练报告
 
-- 训练时间：2026-10-02 15:57:41 UTC（GitHub Actions 运行 37030537603）
+- 训练时间：2026-10-03 03:37:44
 - 训练设备：cpu
-- 耗时：20.6 秒
+- 耗时：17.6 秒
 
 ## 数据
 
@@ -18,7 +18,7 @@
 
 ## 训练结果
 
-- 最佳验证损失：0.3155（第 282 轮）
+- 最佳验证损失：0.3155
 - 最后一个 epoch 的训练损失：0.3026
 - 测试集 AUC：0.9786
 
@@ -30,12 +30,12 @@
       Normal       0.94      0.91      0.93        35
        Cheat       0.88      0.92      0.90        24
 
-    accuracy                          0.92        59
+    accuracy                           0.92        59
    macro avg       0.91      0.92      0.91        59
 weighted avg       0.92      0.92      0.92        59
 ```
 
 ## 产物
 
-- `scaffold_detector.onnx` — sha256 前 12 位：`538912d4adc7`
+- `scaffold_detector.onnx` — sha256 前 12 位：`47670fac8399`
 - `training_curves.png` — 损失曲线
