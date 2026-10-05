@@ -55,6 +55,29 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.11.0</version>
             </plugin>
+
+            <!-- 平台无关的共享源码（core/）：行为特征编码与 ONNX 推理。
+                 与 Fabric 版共用同一份，保证两端特征编码不会漂移。
+                 包名保持 com.gfish.anticheat，所以本模块代码无需改动。 -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.6.2</version>
+                <executions>
+                    <execution>
+                        <id>add-core-sources</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>add-source</goal>
+                        </goals>
+                        <configuration>
+                            <sources>
+                                <source>${project.basedir}/../core/src/main/java</source>
+                            </sources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 </project>

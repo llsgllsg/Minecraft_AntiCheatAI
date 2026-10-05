@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "deepguard",
+  "version": "${version}",
+  "name": "DeepGuard",
+  "description": "AI-powered Minecraft anti-cheat (Fabric server-side)",
+  "authors": ["Gfish"],
+  "license": "MIT",
+  "environment": "server",
+  "entrypoints": {
+    "server": ["com.gfish.anticheat.fabric.DeepGuardFabric"]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "fabric-api": "*",
+    "minecraft": "~26.2",
+    "java": ">=25"
+  }
+}

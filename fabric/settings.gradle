@@ -1,0 +1,14 @@
+// Fabric 构建的根。与仓库根的 Maven 构建互不干扰：
+// 这里只管 fabric 模组，Paper 插件仍由 ../pom.xml 构建。
+pluginManagement {
+    repositories {
+        maven {
+            name = 'Fabric'
+            url = 'https://maven.fabricmc.net/'
+        }
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'DeepGuard-Fabric'
