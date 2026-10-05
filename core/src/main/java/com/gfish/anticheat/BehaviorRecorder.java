@@ -31,5 +31,12 @@ public class BehaviorRecorder {
         public boolean onGround;
         public double moveSpeed;
         public double vertSpeed;
+
+        /** 是否骑乘中（船 / 矿车 / 动物等）。对应特征通道 12。 */
+        public boolean inVehicle;
+        /** 是否正在用鞘翅滑翔。对应特征通道 13。 */
+        public boolean gliding;
+        /** 载具的具体类型（如 minecraft:boat）；不在载具时为空串。只记录，不参与特征编码。 */
+        public String vehicleType;
     }
 }

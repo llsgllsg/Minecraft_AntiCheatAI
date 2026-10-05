@@ -224,6 +224,12 @@ public class BehaviorRecorderPlugin extends JavaPlugin implements Listener {
             tick.moveSpeed = Math.sqrt(vel.getX() * vel.getX() + vel.getZ() * vel.getZ());
             tick.vertSpeed = vel.getY();
 
+            // 载具 / 鞘翅：用于区分「合法滞空」与「飞行外挂」（特征通道 12/13）
+            org.bukkit.entity.Entity vehicle = player.getVehicle();
+            tick.inVehicle = vehicle != null;
+            tick.vehicleType = vehicle == null ? "" : vehicle.getType().getKey().toString();
+            tick.gliding = player.isGliding();
+
             buffer.add(tick);
             placedFlag = false;
 
@@ -272,5 +278,12 @@ public class BehaviorRecorderPlugin extends JavaPlugin implements Listener {
         public boolean onGround;
         public double moveSpeed;
         public double vertSpeed;
+
+        /** 是否骑乘中。对应特征通道 12。 */
+        public boolean inVehicle;
+        /** 是否正在用鞘翅滑翔。对应特征通道 13。 */
+        public boolean gliding;
+        /** 载具的具体类型（如 minecraft:boat）；不在载具时为空串。只记录，不参与特征编码。 */
+        public String vehicleType;
     }
 }

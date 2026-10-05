@@ -289,7 +289,18 @@ public final class AntiCheatPlugin extends JavaPlugin implements Listener {
                 aiEngine = new AIInferenceEngine();
             }
             if (aiEngine.loadModel(modelFile.getAbsolutePath())) {
-                getLogger().info("AI 模型加载成功");
+                // 模型是从 Release 自动下载的，通道数可能和当前特征编码不一致
+                // （例如特征加通道后旧模型仍在线上）。这里提前发现并停用 AI，
+                // 否则每次推理才抛异常、刷屏日志，而且会被当成「正常」静默失效。
+                int modelChannels = aiEngine.getModelChannels();
+                if (modelChannels > 0 && modelChannels != BehaviorImageBuilder.CHANNELS) {
+                    getLogger().severe("AI 模型通道数不匹配：模型期望 " + modelChannels
+                            + " 通道，当前特征编码是 " + BehaviorImageBuilder.CHANNELS
+                            + " 通道。AI 检测已停用，请更新到匹配的模型。");
+                    aiEngine = null;
+                } else {
+                    getLogger().info("AI 模型加载成功（" + BehaviorImageBuilder.CHANNELS + " 通道）");
+                }
             } else {
                 getLogger().warning("AI 模型加载失败");
             }

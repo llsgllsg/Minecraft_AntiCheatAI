@@ -37,6 +37,7 @@ for _s in (sys.stdout, sys.stderr):
 import matplotlib.pyplot as plt
 import numpy as np
 import onnx
+from features import CHANNELS, TIME_STEPS
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -54,7 +55,8 @@ def set_seed(seed=42):
 
 
 class ScaffoldDetector(nn.Module):
-    def __init__(self, in_channels=12, num_classes=2):
+    # 通道数从 features.py 取，避免改特征时忘了同步模型结构
+    def __init__(self, in_channels=CHANNELS, num_classes=2):
         super().__init__()
         self.conv1 = nn.Conv1d(in_channels, 32, 5, padding=2)
         self.bn1 = nn.BatchNorm1d(32)
@@ -243,7 +245,7 @@ def main():
 
     # 导出 ONNX：softmax 概率输出，输入名与 Java 端一致
     export_model = ExportModel(model).to(device).eval()
-    dummy_input = torch.randn(1, 12, 128).to(device)
+    dummy_input = torch.randn(1, CHANNELS, TIME_STEPS).to(device)
     torch.onnx.export(
         export_model, dummy_input, 'scaffold_detector.onnx',
         input_names=['behavior_sequence'], output_names=['output'],

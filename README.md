@@ -76,11 +76,38 @@ updates:
 | `ExemptionType` | ExemptionType | 传送 / 击退宽限期豁免 |
 
 AI 检测路径完整保留：`BehaviorRecorder`（每 tick 录制）→ `BehaviorImageBuilder`
-（12 通道特征图）→ `AIInferenceEngine`（ONNX 推理）→ 阈值判定 / 处罚。
+（17 通道特征图）→ `AIInferenceEngine`（ONNX 推理）→ 阈值判定 / 处罚。
 
-**特征一致性保证**：`BehaviorImageBuilder.java` 与 `python/features.py` 的
-特征编码逐位一致（含通道 11 放置节奏规律性），并有跨语言一致性验证。
-修改特征时请同时更新两端，并运行 `python/test_features.py` 回归。
+每 tick 记录的字段：`pitch` `yaw` `posX/Y/Z` `placing` `sprinting` `jumping`
+`onGround` `moveSpeed` `vertSpeed`，以及 `inVehicle`（是否在载具）、`gliding`
+（是否鞘翅滑翔）、`vehicleType`（载具具体类型，仅供人工分析）。
+
+17 个特征通道：
+
+```
+ 0 pitch 归一化        9 冲刺+放置 二值
+ 1 yaw  归一化        10 近20tick放置数
+ 2 水平速度           11 放置节奏规律性(间隔方差)
+ 3 垂直速度           12 是否在载具 二值
+ 4 placing 二值       13 是否鞘翅滑翔 二值
+ 5 sprinting 二值     14 Δx 每tick水平位移(带符号)
+ 6 jumping 二值       15 Δy 每tick垂直位移(带符号)
+ 7 |Δpitch| 归一化    16 Δz 每tick水平位移(带符号)
+ 8 快速转头(>25°)二值
+```
+
+通道 14/15/16 由相邻两 tick 的坐标差算出，因此对加字段之前录的旧数据同样有效；
+通道 12/13 依赖录制时的 `inVehicle` / `gliding` 字段，旧数据恒为 0。
+
+**特征一致性**：`BehaviorImageBuilder.java` 与 `python/features.py` 的编码一致到
+float32 精度（实测最大偏差 1.19e-07，约 1 ULP —— Java 用 float32 算、Python 用
+float64 算完再存 float32）。对模型输出的影响远低于阈值，实测 95 份录制里
+0.5 / 0.85 两个阈值上零次判定翻转。修改特征时请同时更新两端，
+并运行 `python/test_features.py` 回归。
+
+**模型通道数必须与代码一致**：`AIInferenceEngine` 加载时会读取模型输入的通道数，
+与 `BehaviorImageBuilder.CHANNELS` 不符则**拒绝加载并停用 AI**（模型是自动下载的，
+代码和模型版本错配时如果不挡住，会在每次推理才抛异常、刷屏日志，并被当成「正常」静默失效）。
 
 ---
 

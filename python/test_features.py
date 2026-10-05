@@ -22,12 +22,16 @@ from features import CHANNELS, TIME_STEPS, build_behavior_image, jsonl_to_ticks
 
 
 def make_tick(ts, pitch=0.0, yaw=0.0, placing=False, sprinting=False,
-              jumping=False, move_speed=0.0, vert_speed=0.0):
+              jumping=False, move_speed=0.0, vert_speed=0.0,
+              in_vehicle=False, gliding=False,
+              pos_x=0.0, pos_y=64.0, pos_z=0.0):
     return {
         'ts': ts, 'pitch': pitch, 'yaw': yaw,
-        'posX': 0.0, 'posY': 64.0, 'posZ': 0.0,
+        'posX': pos_x, 'posY': pos_y, 'posZ': pos_z,
         'placing': placing, 'sprinting': sprinting, 'jumping': jumping,
         'onGround': not jumping, 'moveSpeed': move_speed, 'vertSpeed': vert_speed,
+        'inVehicle': in_vehicle, 'gliding': gliding,
+        'vehicleType': 'minecraft:boat' if in_vehicle else '',
     }
 
 
@@ -36,7 +40,7 @@ def test_empty():
     assert img.shape == (CHANNELS, TIME_STEPS), img.shape
     assert img.dtype == np.float32
     assert np.all(img == 0)
-    print('PASS empty -> (12,128) all-zero')
+    print(f'PASS empty -> ({CHANNELS},{TIME_STEPS}) all-zero')
 
 
 def test_normalization():
@@ -126,6 +130,58 @@ def test_jsonl_roundtrip():
         print('PASS jsonl roundtrip + sort')
     finally:
         os.remove(path)
+
+
+def test_vehicle_and_gliding():
+    """通道 12/13：载具 / 鞘翅二值。"""
+    ticks = [make_tick(i, in_vehicle=True, gliding=False) for i in range(128)]
+    img = build_behavior_image(ticks)
+    assert img[12, -1] == 1.0, 'inVehicle should set channel 12'
+    assert img[13, -1] == 0.0
+
+    ticks = [make_tick(i, in_vehicle=False, gliding=True) for i in range(128)]
+    img = build_behavior_image(ticks)
+    assert img[12, -1] == 0.0
+    assert img[13, -1] == 1.0, 'gliding should set channel 13'
+    print('PASS vehicle/gliding channels 12/13')
+
+
+def test_delta_channels():
+    """通道 14/15/16：相邻 tick 的相对位移，0.5 表示没动。"""
+    # 每 tick 水平走 0.5 格（x 方向），垂直不动
+    ticks = [make_tick(i, pos_x=i * 0.5, pos_y=64.0, pos_z=0.0) for i in range(128)]
+    img = build_behavior_image(ticks)
+    # 0.5 格/tick，水平尺度 1.0 -> clamp(0.5) -> (0.5+1)/2 = 0.75
+    assert abs(img[14, -1] - 0.75) < 1e-6, f'Δx expected 0.75, got {img[14, -1]}'
+    assert abs(img[15, -1] - 0.5) < 1e-6, f'Δy expected 0.5, got {img[15, -1]}'
+    assert abs(img[16, -1] - 0.5) < 1e-6, f'Δz expected 0.5, got {img[16, -1]}'
+
+    # 反向移动应落在 0.5 以下
+    ticks = [make_tick(i, pos_x=-i * 0.5) for i in range(128)]
+    img = build_behavior_image(ticks)
+    assert abs(img[14, -1] - 0.25) < 1e-6, f'negative Δx expected 0.25, got {img[14, -1]}'
+    print('PASS delta channels 14/15/16')
+
+
+def test_delta_clamped():
+    """超出一格的位移应被钳到 [0,1] 边界（垂直尺度 4.0）。"""
+    # 垂直每 tick 掉 10 格 —— 远超尺度 4.0，应钳到 0.0
+    ticks = [make_tick(i, pos_y=64.0 - i * 10.0) for i in range(128)]
+    img = build_behavior_image(ticks)
+    assert img[15, -1] == 0.0, f'clamped Δy expected 0.0, got {img[15, -1]}'
+    print('PASS delta clamping')
+
+
+def test_old_data_without_new_fields():
+    """加字段之前录的旧 jsonl 没有 inVehicle/gliding，应默认为 0 且不影响坐标位移。"""
+    old = [{'ts': i, 'pitch': 0.0, 'yaw': 0.0, 'posX': i * 0.5, 'posY': 64.0, 'posZ': 0.0,
+            'placing': False, 'sprinting': False, 'jumping': False, 'onGround': True,
+            'moveSpeed': 0.0, 'vertSpeed': 0.0} for i in range(128)]
+    img = build_behavior_image(old)
+    assert img.shape[0] == CHANNELS
+    assert img[12, -1] == 0.0 and img[13, -1] == 0.0, 'missing fields must default to 0'
+    assert abs(img[14, -1] - 0.75) < 1e-6, 'Δx must still work from existing posX'
+    print('PASS legacy data without new fields')
 
 
 def test_few_ticks_aligned_right():

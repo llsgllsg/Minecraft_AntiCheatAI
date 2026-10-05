@@ -2,6 +2,7 @@ package com.gfish.anticheat;
 
 import com.gfish.anticheat.check.MovementProcessor;
 import org.bukkit.Location;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.util.Vector;
 
@@ -149,6 +150,13 @@ public final class TrackedPlayer {
         tick.jumping = !p.isOnGround();
         tick.moveSpeed = Math.sqrt(vel.getX() * vel.getX() + vel.getZ() * vel.getZ());
         tick.vertSpeed = vel.getY();
+
+        // 载具 / 鞘翅：用于区分「合法滞空」与「飞行外挂」（特征通道 12/13）
+        Entity vehicle = p.getVehicle();
+        tick.inVehicle = vehicle != null;
+        tick.vehicleType = vehicle == null ? "" : vehicle.getType().getKey().toString();
+        tick.gliding = p.isGliding();
+
         placingThisTick = false;
 
         recorder.record(tick);

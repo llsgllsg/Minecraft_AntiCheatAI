@@ -5,25 +5,45 @@ Java 运行时端 (AntiCheat/src/main/java/com/gfish/anticheat/BehaviorImageBuil
 
 约定：
 - ticks: jsonl 中解析出的 dict 列表，按时间先后排序。
-- 输出: float32 numpy 数组，形状 (12, 128)：
-    0  pitch 归一化      7  |Δpitch| 归一化
-    1  yaw  归一化       8  快速转头(>25°)二值
-    2  水平速度          9  冲刺+放置 二值
-    3  垂直速度          10 近20tick放置数
-    4  placing 二值      11 放置节奏规律性(间隔方差)
-    5  sprinting 二值
-    6  jumping 二值
+- 输出: float32 numpy 数组，形状 (17, 128)：
+    0  pitch 归一化        9  冲刺+放置 二值
+    1  yaw  归一化        10  近20tick放置数
+    2  水平速度           11  放置节奏规律性(间隔方差)
+    3  垂直速度           12  是否在载具 二值
+    4  placing 二值       13  是否鞘翅滑翔 二值
+    5  sprinting 二值     14  Δx 每tick水平位移(带符号)
+    6  jumping 二值       15  Δy 每tick垂直位移(带符号)
+    7  |Δpitch| 归一化    16  Δz 每tick水平位移(带符号)
+    8  快速转头(>25°)二值
+
+  通道 12/13 依赖 jsonl 里的 inVehicle / gliding 字段 —— 加字段之前录的旧数据
+  这两项恒为 False（通道值为 0）。通道 14/15/16 由相邻两 tick 的坐标差算出，
+  不依赖新字段，因此**旧数据同样有效**。
+
+  载具的具体类型（vehicleType）只存进 jsonl 供人工分析，不参与特征编码。
 """
 
 import numpy as np
 
-CHANNELS = 12
+CHANNELS = 17
 TIME_STEPS = 128
 
 # Java 端 (BehaviorImageBuilder) 的滑动窗口大小 —— 放置统计 / 间隔统计共用
 PLACE_WINDOW = 20
 # 间隔方差阈值：方差越小(节奏越规律)该通道越接近 1
 INTERVAL_VARIANCE_DIVISOR = 1000.0
+
+# 每 tick 位移的归一化尺度（格/tick）。上下限 ±1，再线性映射到 [0,1]。
+# 水平：一般行走约 0.215、疾跑约 0.28，取 1.0 已足够覆盖。
+# 垂直：自由落体终端速度约 3.92 格/tick，所以尺度取得更大。
+DELTA_H_SCALE = 1.0
+DELTA_V_SCALE = 4.0
+
+
+def _signed_unit(delta, scale):
+    """把带符号的位移按 scale 归一化到 [0,1]（0.5 表示没有位移）。"""
+    clamped = max(-1.0, min(1.0, delta / scale))
+    return (clamped + 1.0) / 2.0
 
 
 def build_behavior_image(ticks, time_steps=TIME_STEPS):
@@ -51,11 +71,19 @@ def build_behavior_image(ticks, time_steps=TIME_STEPS):
         placing = bool(t.get('placing', False))
         sprinting = bool(t.get('sprinting', False))
         jumping = bool(t.get('jumping', False))
+        # 加字段之前录的旧数据没有这两项，默认为 False
+        in_vehicle = bool(t.get('inVehicle', False))
+        gliding = bool(t.get('gliding', False))
 
         pitch_change = 0.0
+        # 与上一 tick 的相对位移：由坐标差算出，不依赖 jsonl 新字段
+        delta_x = delta_y = delta_z = 0.0
         if i > 0:
             prev = ticks[n - length + i - 1]
             pitch_change = abs(pitch - prev.get('pitch', pitch))
+            delta_x = t.get('posX', 0.0) - prev.get('posX', 0.0)
+            delta_y = t.get('posY', 0.0) - prev.get('posY', 0.0)
+            delta_z = t.get('posZ', 0.0) - prev.get('posZ', 0.0)
 
         img[0, idx] = (pitch + 90.0) / 180.0
         img[1, idx] = (yaw + 180.0) / 360.0
@@ -77,6 +105,15 @@ def build_behavior_image(ticks, time_steps=TIME_STEPS):
 
         # channel 11: 放置间隔的规律性 —— 稳定节奏(外挂)趋近 1，随机间隔(真人)趋近 0
         img[11, idx] = _placing_regularity(ticks, n - length, i)
+
+        # channel 12/13: 载具 / 鞘翅 —— 区分「合法滞空」与「飞行外挂」的关键信号
+        img[12, idx] = 1.0 if in_vehicle else 0.0
+        img[13, idx] = 1.0 if gliding else 0.0
+
+        # channel 14/15/16: 与上一 tick 的相对位移（带符号，0.5 = 无位移）
+        img[14, idx] = _signed_unit(delta_x, DELTA_H_SCALE)
+        img[15, idx] = _signed_unit(delta_y, DELTA_V_SCALE)
+        img[16, idx] = _signed_unit(delta_z, DELTA_H_SCALE)
 
     return img
 
