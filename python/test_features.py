@@ -184,6 +184,35 @@ def test_old_data_without_new_fields():
     print('PASS legacy data without new fields')
 
 
+def test_new_channels_do_not_affect_old_ones():
+    """向下兼容的关键不变量：新增通道一律追加在末尾，前 12 个通道必须与
+    「没有新字段的旧数据」编码结果完全一致。
+
+    旧版 12 通道模型靠截取前 12 通道继续工作，所以这条一旦破坏，
+    线上旧模型就会被静默喂进错误的输入。
+    """
+    n = 128
+    legacy = [make_tick(i, pitch=float(i % 90) - 45.0, yaw=float(i * 3 % 360) - 180.0,
+                        placing=(i % 7 == 0), sprinting=(i % 3 == 0), jumping=(i % 5 == 0),
+                        move_speed=float(i % 4) * 0.3, vert_speed=(i % 3) - 1.0)
+              for i in range(n)]
+    # 同一批数据 + 新字段，前 12 通道不应发生任何变化
+    with_new = []
+    for i, t in enumerate(legacy):
+        t2 = dict(t)
+        t2['inVehicle'] = (i % 11 == 0)
+        t2['gliding'] = (i % 13 == 0)
+        t2['vehicleType'] = 'minecraft:boat' if i % 11 == 0 else ''
+        with_new.append(t2)
+
+    a = build_behavior_image(legacy)
+    b = build_behavior_image(with_new)
+    assert a.shape[0] == CHANNELS and b.shape[0] == CHANNELS
+    assert np.array_equal(a[:12].view(np.uint32), b[:12].view(np.uint32)), \
+        '前 12 通道被新字段影响了 —— 向下兼容会失效'
+    print('PASS first 12 channels unaffected by new fields (backward compat)')
+
+
 def test_few_ticks_aligned_right():
     # 只有 64 个 tick 时，应靠右对齐（前 64 列为 0）
     ticks = [make_tick(i, pitch=45.0) for i in range(64)]

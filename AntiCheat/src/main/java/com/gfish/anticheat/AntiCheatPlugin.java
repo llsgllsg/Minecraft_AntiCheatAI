@@ -289,15 +289,19 @@ public final class AntiCheatPlugin extends JavaPlugin implements Listener {
                 aiEngine = new AIInferenceEngine();
             }
             if (aiEngine.loadModel(modelFile.getAbsolutePath())) {
-                // 模型是从 Release 自动下载的，通道数可能和当前特征编码不一致
-                // （例如特征加通道后旧模型仍在线上）。这里提前发现并停用 AI，
-                // 否则每次推理才抛异常、刷屏日志，而且会被当成「正常」静默失效。
+                // 模型从 Release 自动下载，通道数可能和当前特征编码不一致。
                 int modelChannels = aiEngine.getModelChannels();
-                if (modelChannels > 0 && modelChannels != BehaviorImageBuilder.CHANNELS) {
-                    getLogger().severe("AI 模型通道数不匹配：模型期望 " + modelChannels
-                            + " 通道，当前特征编码是 " + BehaviorImageBuilder.CHANNELS
-                            + " 通道。AI 检测已停用，请更新到匹配的模型。");
+                if (modelChannels > BehaviorImageBuilder.CHANNELS) {
+                    // 模型比代码新：特征通道不够用，无法满足
+                    getLogger().severe("AI 模型需要 " + modelChannels + " 个通道，"
+                            + "当前特征编码只有 " + BehaviorImageBuilder.CHANNELS
+                            + " 个。请升级插件。AI 检测已停用。");
                     aiEngine = null;
+                } else if (modelChannels > 0 && modelChannels < BehaviorImageBuilder.CHANNELS) {
+                    // 模型比代码旧：向下兼容。新通道都追加在末尾，
+                    // 只取前 N 个通道即等价于旧版编码，所以旧模型照常可用。
+                    getLogger().info("AI 模型加载成功（旧版 " + modelChannels + " 通道模型，"
+                            + "向下兼容模式：只使用前 " + modelChannels + " 个特征通道）");
                 } else {
                     getLogger().info("AI 模型加载成功（" + BehaviorImageBuilder.CHANNELS + " 通道）");
                 }

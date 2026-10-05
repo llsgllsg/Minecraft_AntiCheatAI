@@ -55,6 +55,17 @@ public class AIInferenceEngine {
         if (!loaded) return new float[]{1.0f, 0.0f};
         try {
             int c = input.length;
+            // 向下兼容：模型通道数比特征通道数少时，只取前 N 个通道。
+            // 新增通道一律追加在末尾，前 12 个通道与旧版编码完全一致，
+            // 所以把 17 通道特征喂给 12 通道模型，结果与旧版行为等价 ——
+            // 这样升级插件后不必立刻换模型，旧模型继续可用。
+            if (modelChannels > 0) {
+                if (c < modelChannels) {
+                    // 特征比模型还少，无法满足，按「正常」兜底（与加载失败一致）
+                    return new float[]{1.0f, 0.0f};
+                }
+                c = modelChannels;
+            }
             int t = input[0].length;
             float[] flat = new float[c * t];
             for (int i = 0; i < c; i++) {
