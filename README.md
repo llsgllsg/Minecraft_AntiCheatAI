@@ -6,6 +6,19 @@
 > 这个项目在 AI 能力的基础上，参照著名开源反作弊 **Grim** 的架构进行重构。
 > 项目大部分由 AI 生成，请注意辨别。
 
+## 支持平台
+
+| 平台 | 模块 | 说明 |
+| --- | --- | --- |
+| Paper | `AntiCheat/` `recorder-plugin/` | 主插件 + 录制插件，Maven 构建 |
+| Fabric（Minecraft 26.2） | `fabric/` | 服务端模组，Gradle/Loom 构建 |
+| NeoForge（Minecraft 26.2） | `neoforge/` | 服务端模组，Gradle/ModDevGradle 构建 |
+| Mi-loader | — | 暂不支持，该加载器目前只有客户端集成，见 [`docs/mi-loader.md`](docs/mi-loader.md) |
+
+> **Fabric / NeoForge 版目前是骨架**：工具链、构建与发布链路已经打通并随 Release 出包，
+> 但检测逻辑仍在从 Paper 版移植中，装上后暂时只打印一行加载日志。
+> 功能完整的是 Paper 版。
+
 ## 功能
 
 - **传统移动检测**
@@ -118,6 +131,10 @@ float64 算完再存 float32）。对模型输出的影响远低于阈值，实�
 
 ## 构建
 
+仓库里并存两套构建系统，各管各的模块，互不干扰：
+
+**Paper 插件（Maven，JDK 21）**
+
 ```bash
 mvn clean package
 ```
@@ -125,7 +142,26 @@ mvn clean package
 根 `pom.xml` 聚合 `AntiCheat`（主插件）与 `recorder-plugin`（录制插件）两个模块，
 一次构建产出 `AntiCheat/target/DeepGuard.jar` 与 `recorder-plugin/target/BehaviorRecorder.jar`。
 
-GitHub Actions 会在每次 push / PR 自动构建并运行 Python 特征测试。
+**Fabric / NeoForge 模组（Gradle，JDK 25）**
+
+```bash
+cd fabric   && ./gradlew build     # -> fabric/build/libs/DeepGuard-Fabric-<版本>.jar
+cd neoforge && ./gradlew build     # -> neoforge/build/libs/DeepGuard-NeoForge-<版本>.jar
+```
+
+两边都是**独立的 Gradle 根**（各有自己的 `settings.gradle` 与 wrapper），
+不参与根 Maven 构建。Minecraft 26.2 的字节码目标是 Java 25，所以这两个模块需要 JDK 25，
+与 Maven 侧的 21 并存。
+
+两个模块共用 `core/src/main/java`（平台无关的行为录制与特征编码），
+它们都把这个目录加进自己的源码根 —— Paper / Fabric / NeoForge / `python/features.py`
+四方的特征编码因此不可能悄悄漂移。
+
+**版本号只有一个真源**：根 `pom.xml`。`fabric/build.gradle` 与 `neoforge/build.gradle`
+都在配置阶段直接读它，`gradle.properties` 里只放工具链版本（Minecraft / Loader / 插件），
+`release.yml` 不需要为它们单独同步版本号（CI 里有断言守着这条）。
+
+GitHub Actions 会在每次 push / PR 自动构建三端并运行 Python 特征测试。
 
 ---
 

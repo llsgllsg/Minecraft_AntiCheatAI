@@ -1,0 +1,75 @@
+name: 构建 NeoForge 模组
+
+# 每次 push / PR 都构建 NeoForge 模组。
+# 与 build.yml（Paper 插件）、fabric.yml（Fabric 模组）互补。
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # Minecraft 26.2 的字节码目标是 Java 25，与 Maven 侧的 21 不同。
+      - name: 设置 JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+
+      # NeoForge 走 NeoForm 管线，首次构建要下载并处理 MC 产物，缓存命中与否差别极大。
+      - name: 缓存 Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('neoforge/**/*.gradle', 'neoforge/gradle.properties', 'neoforge/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: 构建模组
+        working-directory: neoforge
+        run: |
+          chmod +x ./gradlew
+          ./gradlew build --no-daemon
+
+      - name: 校验产物与版本一致性
+        run: |
+          ls -la neoforge/build/libs/
+
+          JAR=$(ls -1 neoforge/build/libs/DeepGuard-NeoForge-*.jar 2>/dev/null | head -1)
+          if [ -z "$JAR" ]; then
+            echo "::error::未生成 NeoForge 模组 jar"
+            exit 1
+          fi
+
+          # neoforge/build.gradle 的版本号读自根 pom.xml，这里断言两者确实一致 ——
+          # 这个仓库历史上就是被多处版本号失同步坑过。
+          POM_VER=$(grep -m1 '<version>' pom.xml | sed -E 's/.*<version>([^<]*)<\/version>.*/\1/')
+          JAR_VER=$(basename "$JAR" | sed -E 's/^DeepGuard-NeoForge-(.*)\.jar$/\1/')
+          echo "pom.xml=$POM_VER  jar=$JAR_VER"
+          if [ "$POM_VER" != "$JAR_VER" ]; then
+            echo "::error::版本号不一致：pom.xml=${POM_VER}，模组 jar=${JAR_VER}"
+            exit 1
+          fi
+
+          # mods.toml 里的 version 也应被 processResources 展开成同一个版本号
+          # （漏了 expand 的话这里会留下字面量 ${version}）。
+          unzip -p "$JAR" META-INF/neoforge.mods.toml | grep -q "version=\"${POM_VER}\"" || {
+            echo "::error::neoforge.mods.toml 里的版本号不是 ${POM_VER}"
+            unzip -p "$JAR" META-INF/neoforge.mods.toml | head -20
+            exit 1
+          }
+
+      - name: 上传模组
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeepGuard-NeoForge
+          path: neoforge/build/libs/DeepGuard-NeoForge-*.jar
+          if-no-files-found: error

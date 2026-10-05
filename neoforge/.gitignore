@@ -1,0 +1,15 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# NeoForge 运行目录（runServer 生成）
+run/
+
+# 构建日志
+*.log

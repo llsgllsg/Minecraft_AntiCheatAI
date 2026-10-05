@@ -1,0 +1,14 @@
+// NeoForge 构建的根。与仓库根的 Maven 构建、以及 ../fabric 的构建互不干扰：
+// 这里只管 neoforge 模组，Paper 插件仍由 ../pom.xml 构建。
+pluginManagement {
+    repositories {
+        maven {
+            name = 'NeoForged'
+            url = 'https://maven.neoforged.net/releases'
+        }
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'DeepGuard-NeoForge'

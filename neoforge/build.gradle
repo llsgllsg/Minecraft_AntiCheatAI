@@ -1,0 +1,74 @@
+import groovy.xml.XmlSlurper
+
+plugins {
+    // ModDevGradle 负责 NeoForge 那套工具链（NeoForm 管线 + 反混淆/合并后的 MC 编译产物）。
+    id 'net.neoforged.moddev' version "${mdg_version}"
+}
+
+group = 'com.gfish'
+
+// 版本号的唯一真源是仓库根的 pom.xml —— 与 fabric/build.gradle 同一套做法，
+// release.yml 不需要为 neoforge 单独改版本号。
+version = new XmlSlurper(false, false).parse(file('../pom.xml')).version.text()
+
+base {
+    archivesName = 'DeepGuard-NeoForge'
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        name = 'NeoForged'
+        url = 'https://maven.neoforged.net/releases'
+    }
+}
+
+neoForge {
+    enable {
+        version = "${neoforge_version}"
+
+        // 26.2 是非混淆版本（Mojang 自 26.1 起不再混淆服务端 jar），编译不需要
+        // NeoForm 反编译/重编译出来的 MC 源码。跳过这一步能省十几分钟。
+        // MDG 2.0.136+ 在 CI（CI=true）上本来就会自动关掉，这里显式写死，
+        // 免得本地构建和 CI 走两条不同的管线、结果对不上。
+        disableRecompilation = true
+    }
+
+    // 服务端 mod：只注册 server run。不生成 client run —— CI 上起不了图形界面，
+    // 而且这个 mod 本身也不该跑在客户端。
+    runs {
+        server {
+            server()
+        }
+    }
+
+    mods {
+        deepguard {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+// 平台无关的共享源码，与 fabric 模块用的是同一份目录。
+// 同样排除 AIInferenceEngine：它引用 ai.onnxruntime，而 onnxruntime
+// 不在本模组的类路径上（运行时下载 + 子类加载器加载）。
+sourceSets.main.java.srcDir '../core/src/main/java'
+sourceSets.main.java.exclude 'com/gfish/anticheat/AIInferenceEngine.java'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 25
+}
+
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand version: project.version
+    }
+}

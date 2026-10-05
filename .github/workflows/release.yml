@@ -144,10 +144,10 @@ jobs:
           done
 
       # ------------------------------------------------------------------
-      # Fabric 模组：需要 JDK 25（Minecraft 26.2 的字节码目标），
-      # 与上面 Maven 用的 JDK 21 并存 —— setup-java 调两次，后一次覆盖 JAVA_HOME。
+      # 模组加载器版本（Fabric / NeoForge）：需要 JDK 25（Minecraft 26.2 的字节码
+      # 目标），与上面 Maven 用的 JDK 21 并存 —— setup-java 调两次，后一次覆盖 JAVA_HOME。
       # ------------------------------------------------------------------
-      - name: 设置 JDK 25（Fabric 用）
+      - name: 设置 JDK 25（Fabric / NeoForge 用）
         uses: actions/setup-java@v4
         with:
           java-version: '25'
@@ -159,7 +159,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('fabric/**/*.gradle', 'fabric/gradle.properties', 'fabric/gradle/wrapper/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-${{ hashFiles('fabric/**/*.gradle', 'fabric/gradle.properties', 'fabric/gradle/wrapper/gradle-wrapper.properties', 'neoforge/**/*.gradle', 'neoforge/gradle.properties', 'neoforge/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
 
@@ -176,6 +176,22 @@ jobs:
           ls -la fabric/build/libs/
           if [ -z "$(ls -1 fabric/build/libs/DeepGuard-Fabric-*.jar 2>/dev/null)" ]; then
             echo "::error::未生成 Fabric 模组 jar"
+            exit 1
+          fi
+
+      # neoforge/build.gradle 同样直接读根 pom.xml 拿版本号。
+      # 注意 NeoForge 走的是 NeoForm 管线，首次构建要下载并处理 MC 产物，比 Fabric 慢。
+      - name: 构建 NeoForge 模组
+        working-directory: neoforge
+        run: |
+          chmod +x ./gradlew
+          ./gradlew build --no-daemon
+
+      - name: 校验 NeoForge 产物
+        run: |
+          ls -la neoforge/build/libs/
+          if [ -z "$(ls -1 neoforge/build/libs/DeepGuard-NeoForge-*.jar 2>/dev/null)" ]; then
+            echo "::error::未生成 NeoForge 模组 jar"
             exit 1
           fi
 
@@ -217,6 +233,7 @@ jobs:
             echo "|------|------|"
             echo "| DeepGuard.jar | 主反作弊插件（Paper），放入服务器 plugins/ 目录 |"
             echo "| DeepGuard-Fabric-*.jar | Fabric 服务端模组，放入服务器 mods/ 目录（需 Fabric Loader + Fabric API，Minecraft 26.2） |"
+            echo "| DeepGuard-NeoForge-*.jar | NeoForge 服务端模组，放入服务器 mods/ 目录（需 NeoForge 26.2，Minecraft 26.2） |"
             echo "| BehaviorRecorder.jar | 行为录制插件（Paper），用于采集训练数据 |"
             echo "| scaffold_detector.onnx | AI 模型文件（插件启动时也会自动下载） |"
             if [ -f python/training_curves.png ]; then
@@ -271,6 +288,11 @@ jobs:
             echo ""
             echo "**Fabric 服务端（Minecraft 26.2）**：需要 Fabric Loader + Fabric API，"
             echo "把 \`DeepGuard-Fabric-*.jar\` 放进 \`mods/\` 目录。"
+            echo ""
+            echo "**NeoForge 服务端（Minecraft 26.2）**：需要 NeoForge 26.2，"
+            echo "把 \`DeepGuard-NeoForge-*.jar\` 放进 \`mods/\` 目录。"
+            echo "这是纯服务端 mod，客户端不需要安装。"
+            echo ""
             echo "首次启动会自动下载 ONNX 运行时（约 88 MB，仅一次），期间传统检测照常工作，AI 检测稍后启用。"
             echo ""
             echo "如已安装旧版，直接替换 jar 即可；模型会自动更新。"
@@ -293,12 +315,12 @@ jobs:
             recorder-plugin/target/BehaviorRecorder.jar
             AntiCheat/src/main/resources/scaffold_detector.onnx
           )
-          # Fabric 模组（文件名带版本号，用通配符取）
-          for jar in fabric/build/libs/DeepGuard-Fabric-*.jar; do
+          # 模组加载器版本（文件名带版本号，用通配符取）
+          for jar in fabric/build/libs/DeepGuard-Fabric-*.jar neoforge/build/libs/DeepGuard-NeoForge-*.jar; do
             if [ -f "$jar" ]; then
               ASSETS+=("$jar")
             else
-              echo "::warning::未找到 Fabric 模组 jar，本次 Release 不会附带"
+              echo "::warning::未找到模组 jar: $jar，本次 Release 不会附带"
             fi
           done
           # 训练曲线 / 报告存在才附带（未训练过时不至于让发布失败）
