@@ -1,5 +1,5 @@
 name: DeepGuard
-version: 4.0.0
+version: 4.0.1
 main: com.gfish.anticheat.AntiCheatPlugin
 api-version: '1.21'
 author: Gfish
