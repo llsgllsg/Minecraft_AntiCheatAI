@@ -74,19 +74,8 @@ updates:
 
 ---
 
-## 架构（参照 Grim 重构）
+## 架构
 
-检测逻辑不再堆在主类里，而是按 Grim 的分层拆解：
-
-| 组件 | 对应 Grim | 职责 |
-| --- | --- | --- |
-| `AntiCheatPlugin` | GrimPlugin | 生命周期、调度、命令、事件分发 |
-| `TrackedPlayer` | GrimPlayer | 每玩家数据对象：录制器、移动处理器、豁免、各检查状态 |
-| `check.MovementProcessor` | Processors | 把原始移动事件换算成运动数据（速度等），维护位置基线 |
-| `check.CheckData` | CheckData | 一次移动事件的计算快照，供各检查只读共享 |
-| `check.FlyCheck` / `BoatSpeedCheck` / `SpeedCheck` | AbstractCheck | 每项独立检测，只做判定 |
-| `PunishmentManager` | PunishmentManager | 累进处罚、封禁码、违规记录落盘 |
-| `ExemptionType` | ExemptionType | 传送 / 击退宽限期豁免 |
 
 AI 检测路径完整保留：`BehaviorRecorder`（每 tick 录制）→ `BehaviorImageBuilder`
 （17 通道特征图）→ `AIInferenceEngine`（ONNX 推理）→ 阈值判定 / 处罚。
