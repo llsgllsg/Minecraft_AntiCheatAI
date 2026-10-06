@@ -13,6 +13,12 @@ AI 驱动的 Minecraft 反作弊（NeoForge 服务端）。
 通过分析玩家视角旋转与放置方块的协同模式，识别机械式搭路外挂。
 '''
 
+# 移动 / 放置 / 传送 / 击退的注入点。与 Fabric 版共用同一份 Mixin 源码
+# （mod-common/src/main/java/com/gfish/anticheat/mod/mixin），
+# 所以两端的检测行为由构造保证一致。
+[[mixins]]
+config="deepguard.mixins.json"
+
 [[dependencies.deepguard]]
 modId="neoforge"
 type="required"

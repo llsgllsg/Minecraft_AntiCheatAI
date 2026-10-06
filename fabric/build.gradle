@@ -31,6 +31,11 @@ dependencies {
 sourceSets.main.java.srcDir '../core/src/main/java'
 sourceSets.main.java.exclude 'com/gfish/anticheat/AIInferenceEngine.java'
 
+// 两个模组共用的适配层（PlayerHandle 实现、移动事件发射器、Mixin、配置读取）。
+// 它只依赖 core 与 Mojang 类型，不依赖任何加载器 API，所以 Fabric 与 NeoForge
+// 编译的是同一份源码 —— 检测行为由构造保证一致，而不是靠两边各写一遍再对齐。
+sourceSets.main.java.srcDir '../mod-common/src/main/java'
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(25)
@@ -46,5 +51,11 @@ processResources {
     inputs.property 'version', project.version
     filesMatching('fabric.mod.json') {
         expand version: project.version
+    }
+    // 默认配置的唯一真源是 Paper 模块的 config.yml —— 拷进 jar 的 deepguard/ 下，
+    // 运行时首次启动释放到配置目录。三端因此共用同一份默认值，
+    // 不会出现"同一个 max-speed 在 Fabric 和 Paper 上不一样"。
+    from('../AntiCheat/src/main/resources/config.yml') {
+        into 'deepguard'
     }
 }

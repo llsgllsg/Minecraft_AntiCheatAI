@@ -1,0 +1,17 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.gfish.anticheat.mod.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "server": [
+    "PlayerAttackMixin",
+    "PlayerInvoker",
+    "ServerEntityMixin",
+    "ServerGamePacketListenerImplMixin",
+    "ServerPlayerGameModeMixin",
+    "ServerPlayerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

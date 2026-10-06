@@ -10,6 +10,7 @@
   "entrypoints": {
     "server": ["com.gfish.anticheat.fabric.DeepGuardFabric"]
   },
+  "mixins": ["deepguard.mixins.json"],
   "depends": {
     "fabricloader": ">=0.19.5",
     "fabric-api": "*",

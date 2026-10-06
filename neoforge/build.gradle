@@ -55,6 +55,10 @@ neoForge {
 sourceSets.main.java.srcDir '../core/src/main/java'
 sourceSets.main.java.exclude 'com/gfish/anticheat/AIInferenceEngine.java'
 
+// 两个模组共用的适配层（PlayerHandle 实现、移动事件发射器、Mixin、配置读取）。
+// 与 Fabric 版编译的是同一份源码 —— 检测行为由构造保证一致。
+sourceSets.main.java.srcDir '../mod-common/src/main/java'
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(25)
@@ -70,5 +74,10 @@ processResources {
     inputs.property 'version', project.version
     filesMatching('META-INF/neoforge.mods.toml') {
         expand version: project.version
+    }
+    // 默认配置的唯一真源是 Paper 模块的 config.yml —— 与 Fabric 版做法一致，
+    // 保证三端的默认值逐字节相同。
+    from('../AntiCheat/src/main/resources/config.yml') {
+        into 'deepguard'
     }
 }
