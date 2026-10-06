@@ -1,11 +1,7 @@
 name: 构建 NeoForge 模组
 
-# 每次 push / PR 都构建 NeoForge 模组。
-# 与 build.yml（Paper 插件）、fabric.yml（Fabric 模组）互补。
 
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 jobs:
