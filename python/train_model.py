@@ -144,7 +144,18 @@ def main():
         batch_size=args.batch_size)
 
     model = ScaffoldDetector().to(device)
-    criterion = nn.CrossEntropyLoss()
+
+    # 类别权重：作弊样本远少于正常样本（当前约 1:7）。不加权的话损失会被多数类
+    # 主导，模型只要无脑预测「正常」就能拿到很高的准确率，作弊类召回直接塌掉。
+    # 用 sklearn 式的 balanced 权重 w_c = N / (类别数 * 该类样本数)。
+    counts = np.bincount(y_train, minlength=2).astype(np.float64)
+    class_weights = len(y_train) / (2.0 * np.maximum(counts, 1.0))
+    weight_tensor = torch.tensor(class_weights, dtype=torch.float32).to(device)
+    criterion = nn.CrossEntropyLoss(weight=weight_tensor)
+    print(f'训练集类别分布: 正常 {int(counts[0])} / 作弊 {int(counts[1])}')
+    print(f'类别权重: 正常 {class_weights[0]:.3f} / 作弊 {class_weights[1]:.3f} '
+          f'(作弊样本被放大 {class_weights[1] / class_weights[0]:.1f} 倍)')
+
     optimizer = optim.Adam(model.parameters(), lr=0.000006)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
 
@@ -263,6 +274,7 @@ def main():
         best_val_loss=best_val_loss, final_train_loss=train_losses[-1],
         test_report=test_report, auc=auc,
         batch_size=args.batch_size, lr=0.000006, seed=args.seed,
+        w_normal=float(class_weights[0]), w_cheat=float(class_weights[1]),
         duration=time.time() - start_time)
 
 
@@ -292,7 +304,8 @@ def write_training_report(out_path, **m):
 
 - 样本总数：{m['n_total']}（正常 {m['n_total'] - m['n_cheat']} / 作弊 {m['n_cheat']}）
 - 划分：训练 {m['n_train']} / 验证 {m['n_val']} / 测试 {m['n_test']}
-- 特征图形状：(12, 128)，与 `features.py` / `BehaviorImageBuilder.java` 逐位一致
+- 特征图形状：({CHANNELS}, {TIME_STEPS})，与 `features.py` / `BehaviorImageBuilder.java` 逐位一致
+- 类别权重：正常 {m['w_normal']:.3f} / 作弊 {m['w_cheat']:.3f}（balanced，抵消类别不平衡）
 
 ## 超参数
 
