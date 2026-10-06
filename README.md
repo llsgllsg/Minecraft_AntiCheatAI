@@ -1,7 +1,5 @@
 # DeepGuard
 
-[![构建状态](https://github.com/llsgllsg/Minecraft_AntiCheatAI/actions/workflows/build.yml/badge.svg)](https://github.com/llsgllsg/Minecraft_AntiCheatAI/actions/workflows/build.yml)
-[![Python 管线](https://github.com/llsgllsg/Minecraft_AntiCheatAI/actions/workflows/python.yml/badge.svg)](https://github.com/llsgllsg/Minecraft_AntiCheatAI/actions/workflows/python.yml)
 
 > 这个项目在 AI 能力的基础上，参照著名开源反作弊 **Grim** 的架构进行重构。
 > 项目大部分由 AI 生成，请注意辨别。
