@@ -13,7 +13,6 @@
 | Paper | `AntiCheat/` `recorder-plugin/` | 主插件 + 录制插件，Maven 构建 |
 | Fabric（Minecraft 26.2） | `fabric/` | 服务端模组，Gradle/Loom 构建 |
 | NeoForge（Minecraft 26.2） | `neoforge/` | 服务端模组，Gradle/ModDevGradle 构建 |
-| Mi-loader | — | 暂不支持，该加载器目前只有客户端集成，见 [`docs/mi-loader.md`](docs/mi-loader.md) |
 
 > **Fabric / NeoForge 版目前是骨架**：工具链、构建与发布链路已经打通并随 Release 出包，
 > 但检测逻辑仍在从 Paper 版移植中，装上后暂时只打印一行加载日志。
