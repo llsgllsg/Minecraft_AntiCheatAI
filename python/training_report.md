@@ -1,8 +1,8 @@
 # DeepGuard 模型训练报告
 
-- 训练时间：2026-10-06 08:12:33
+- 训练时间：2026-10-06 08:49:07
 - 训练设备：cpu
-- 耗时：50.8 秒
+- 耗时：47.1 秒
 
 ## 数据
 
@@ -38,5 +38,5 @@ weighted avg       0.88      0.87      0.87       205
 
 ## 产物
 
-- `scaffold_detector.onnx` — sha256 前 12 位：`ce2643bba6f6`
+- `scaffold_detector.onnx` — sha256 前 12 位：`69f791ce17ec`
 - `training_curves.png` — 损失曲线
