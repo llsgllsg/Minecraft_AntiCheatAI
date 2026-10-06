@@ -1,11 +1,8 @@
 name: 构建 Fabric 模组
 
-# 每次 push / PR 都构建 Fabric 模组。
-# 与 build.yml（只管 Maven 的 Paper 插件）互补 —— 之前 fabric/ 改了没有任何 CI 会报警。
+
 
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -15,14 +12,12 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      # Minecraft 26.2 的字节码目标是 Java 25，与 Maven 侧的 21 不同。
       - name: 设置 JDK 25
         uses: actions/setup-java@v4
         with:
           java-version: '25'
           distribution: 'temurin'
 
-      # Loom 需要下载 Minecraft + Fabric API，缓存命中与否差别很大。
       - name: 缓存 Gradle
         uses: actions/cache@v4
         with:
@@ -49,8 +44,6 @@ jobs:
             exit 1
           fi
 
-          # fabric/build.gradle 的版本号读自根 pom.xml，这里断言两者确实一致 ——
-          # 这个仓库历史上就是被多处版本号失同步坑过。
           POM_VER=$(grep -m1 '<version>' pom.xml | sed -E 's/.*<version>([^<]*)<\/version>.*/\1/')
           JAR_VER=$(basename "$JAR" | sed -E 's/^DeepGuard-Fabric-(.*)\.jar$/\1/')
           echo "pom.xml=$POM_VER  jar=$JAR_VER"
