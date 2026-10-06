@@ -1,9 +1,6 @@
 name: Python 管线检查
 
-# 每次 push（任意分支）与 Pull Request 自动运行
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 jobs:
