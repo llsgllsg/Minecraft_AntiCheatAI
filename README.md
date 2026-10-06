@@ -9,9 +9,15 @@
 | Fabric（Minecraft 26.2） | `fabric/` | 服务端模组，Gradle/Loom 构建 |
 | NeoForge（Minecraft 26.2） | `neoforge/` | 服务端模组，Gradle/ModDevGradle 构建 |
 
-> **Fabric / NeoForge 版目前是骨架**：工具链、构建与发布链路已经打通并随 Release 出包，
-> 但检测逻辑仍在从 Paper 版移植中，装上后暂时只打印一行加载日志。
-> 功能完整的是 Paper 版。
+> **三端共用一份检测内核**：`core/` 放平台无关的检测逻辑（检查 / 处罚 / 命令 / 配置），
+> `mod-common/` 放两个模组共用的适配层（Mixin 注入、玩家状态映射、移动事件发射器）。
+> Paper 版目前仍跑在自己原有的实现上 —— 三端行为对齐由内核的单元测试，以及对
+> CraftBukkit 事件语义（含移动事件的死区过滤、骑船走 `handleMoveVehicle`、
+> 击退豁免判 `hurtMarked`）的逐字复刻来保证。
+>
+> 两个模组首次启动会**异步**下载 ONNX 运行时（约 88 MB，仅一次）；下载期间
+> 传统移动检测照常工作，AI 检测在就绪后自动接入。纸面之外的差别只有一条：
+> 模组端没有 PlaceholderAPI，速度检测的属性加成恒为 0。
 
 ## 功能
 
@@ -147,15 +153,24 @@ cd neoforge && ./gradlew build     # -> neoforge/build/libs/DeepGuard-NeoForge-<
 不参与根 Maven 构建。Minecraft 26.2 的字节码目标是 Java 25，所以这两个模块需要 JDK 25，
 与 Maven 侧的 21 并存。
 
-两个模块共用 `core/src/main/java`（平台无关的行为录制与特征编码），
-它们都把这个目录加进自己的源码根 —— Paper / Fabric / NeoForge / `python/features.py`
-四方的特征编码因此不可能悄悄漂移。
+三端共用两处源码目录，都是直接加进各自编译的：
+- `core/src/main/java` —— 平台无关的检测内核与特征编码；
+- `mod-common/src/main/java` —— 两个模组共用的适配层与 Mixin（只依赖 core 与 Mojang
+  类型，不依赖任何加载器 API，所以 Fabric 与 NeoForge 编译的是同一份源码）。
+
+`onnx-bridge/` 是例外：它引用 `ai.onnxruntime`，被单独编成 `onnx-bridge.jar` 塞进模组
+资源，运行时由子类加载器加载 —— 放进主类路径会导致父加载器抢先定义它，进而
+`NoClassDefFoundError`。详见 `OnnxRuntimeLoader` 的注释。
+
+于是 Paper / Fabric / NeoForge / `python/features.py` 四方的特征编码不可能悄悄漂移。
 
 **版本号只有一个真源**：根 `pom.xml`。`fabric/build.gradle` 与 `neoforge/build.gradle`
 都在配置阶段直接读它，`gradle.properties` 里只放工具链版本（Minecraft / Loader / 插件），
 `release.yml` 不需要为它们单独同步版本号（CI 里有断言守着这条）。
 
-GitHub Actions 会在每次 push / PR 自动构建三端并运行 Python 特征测试。
+GitHub Actions 里的构建工作流全部是**手动触发**（Actions → 选工作流 → Run workflow），
+不会在 push / PR 时自动跑。例外只有两个路径触发：`ingest.yml`（推送录制数据时）与
+`release.yml`（打 `v*` tag 时）。
 
 ---
 

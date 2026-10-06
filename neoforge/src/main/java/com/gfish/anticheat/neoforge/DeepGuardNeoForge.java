@@ -9,11 +9,13 @@ import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
@@ -48,6 +50,9 @@ public final class DeepGuardNeoForge {
 
         IEventBus bus = NeoForge.EVENT_BUS;
         bus.addListener(this::onServerStarting);
+        // AI 在 SERVER_STARTED 之后才起：它要下 87 MB 的 runtime，
+        // 全程异步、不阻塞启动；就绪前移动类检查已经生效。
+        bus.addListener(this::onServerStarted);
         bus.addListener(this::onServerStopped);
         bus.addListener(this::onPlayerLoggedIn);
         bus.addListener(this::onPlayerLoggedOut);
@@ -67,6 +72,17 @@ public final class DeepGuardNeoForge {
         runtime = created;
         ModRuntime.install(created);
         LOGGER.info("DeepGuard (NeoForge) 已启用，配置目录: " + configDir);
+    }
+
+    private void onServerStarted(ServerStartedEvent event) {
+        ModRuntime current = runtime;
+        if (current == null) {
+            return;
+        }
+        String modVersion = ModList.get().getModContainerById(MOD_ID)
+                .map(container -> container.getModInfo().getVersion().toString())
+                .orElse("unknown");
+        current.startAi(modVersion);
     }
 
     private void onServerStopped(ServerStoppedEvent event) {

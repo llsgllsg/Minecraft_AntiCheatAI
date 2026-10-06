@@ -36,6 +36,9 @@ public final class DeepGuardFabric implements ModInitializer {
         LOGGER.info("DeepGuard (Fabric) 正在初始化");
 
         ServerLifecycleEvents.SERVER_STARTING.register(DeepGuardFabric::start);
+        // AI 在 SERVER_STARTED 之后才起：它要下 87 MB 的 runtime，
+        // 全程异步、不阻塞启动；就绪前移动类检查已经生效。
+        ServerLifecycleEvents.SERVER_STARTED.register(DeepGuardFabric::startAi);
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             ModRuntime current = runtime;
             if (current != null) {
@@ -77,5 +80,16 @@ public final class DeepGuardFabric implements ModInitializer {
         runtime = created;
         ModRuntime.install(created);
         LOGGER.info("DeepGuard (Fabric) 已启用，配置目录: " + configDir);
+    }
+
+    private static void startAi(MinecraftServer server) {
+        ModRuntime current = runtime;
+        if (current == null) {
+            return;
+        }
+        String modVersion = FabricLoader.getInstance().getModContainer(MOD_ID)
+                .map(container -> container.getMetadata().getVersion().getFriendlyString())
+                .orElse("unknown");
+        current.startAi(modVersion);
     }
 }

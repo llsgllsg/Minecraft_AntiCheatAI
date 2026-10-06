@@ -2,6 +2,7 @@ package com.gfish.anticheat.mod;
 
 import com.gfish.anticheat.core.DeepGuardCore;
 import com.gfish.anticheat.core.platform.ApBonusProvider;
+import com.gfish.anticheat.mod.ai.AiManager;
 import net.minecraft.server.level.ServerPlayer;
 
 import java.util.HashMap;
@@ -29,12 +30,11 @@ public final class ModRuntime {
     private final McPlatform platform;
     private final DeepGuardCore core;
     private final Map<UUID, MoveEventEmitter> emitters = new HashMap<>();
+    private volatile AiManager aiManager;
 
     public ModRuntime(McPlatform platform) {
         this.platform = platform;
         this.core = new DeepGuardCore(platform, NO_AP_BONUS);
-        // 模组端暂不接 ONNX（阶段 4 才有运行时下载 + 子类加载器桥接），
-        // 此时 AI 扫描不跑，移动类检查照常工作。
         core.start();
     }
 
@@ -52,6 +52,26 @@ public final class ModRuntime {
 
     public DeepGuardCore core() {
         return core;
+    }
+
+    /**
+     * 服务端起来后调用：启动 AI 子系统（释放模型 / 下载 onnxruntime / 建引擎）。
+     * <p>
+     * 一切都是异步的 —— 首次运行要下 87 MB，绝不能卡在启动路径上。
+     * 期间移动类检查已经生效，AI 就绪后会自行接入。
+     *
+     * @param modVersion 模组版本号，仅用于「发现新版本」的提示
+     */
+    public void startAi(String modVersion) {
+        AiManager manager = new AiManager(platform, core, modVersion);
+        this.aiManager = manager;
+        core.setUpdateService(manager.updateService());
+        manager.initAsync();
+    }
+
+    /** AI 子系统；未调用 {@link #startAi} 时为 null。 */
+    public AiManager aiManager() {
+        return aiManager;
     }
 
     // ------------------------------------------------------------------

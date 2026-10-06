@@ -36,6 +36,40 @@ sourceSets.main.java.exclude 'com/gfish/anticheat/AIInferenceEngine.java'
 // 编译的是同一份源码 —— 检测行为由构造保证一致，而不是靠两边各写一遍再对齐。
 sourceSets.main.java.srcDir '../mod-common/src/main/java'
 
+// ---- ONNX 桥接 ----
+// onnxruntime 有 87 MB（含各平台 native 库），不可能打进模组 jar；而模组的
+// 类路径在启动时就固定了，没法事后追加。所以桥接实现单独编成一个 jar 塞进资源，
+// 运行时由子类加载器连同下载来的 onnxruntime 一起加载。
+//
+// ⚠️ 这些类绝不能进主 source set：父加载器一旦先定义了 OnnxAiEngine，它引用的
+// ai.onnxruntime 也会按父加载器去解析，而 onnxruntime 只在子加载器里
+// → NoClassDefFoundError。
+sourceSets {
+    bridge {
+        java.srcDir '../onnx-bridge/src/main/java'
+        // 桥接只认 core.spi 里的接口。把这两个源文件一起编进来、再从 jar 里排除，
+        // 是为了让 bridge 的编译**不依赖主 source set 的产物** —— 否则会形成
+        // classes → processResources → bridgeJar → bridgeClasses → classes 的环。
+        java.srcDir '../core/src/main/java/com/gfish/anticheat/core/spi'
+    }
+}
+
+dependencies {
+    // 只在编译桥接时需要；运行时的 onnxruntime 由 OnnxRuntimeLoader 下载
+    bridgeCompileOnly "com.microsoft.onnxruntime:onnxruntime:${onnxruntime_version}"
+}
+
+tasks.register('bridgeJar', Jar) {
+    dependsOn 'bridgeClasses'
+    archiveFileName = 'onnx-bridge.jar'
+    destinationDirectory = layout.buildDirectory.dir('generated/onnx')
+    from(sourceSets.bridge.output) {
+        // 只放桥接自己的类；AiEngine 等 SPI 必须由父加载器定义，
+        // 否则子加载器会再定义一份，父类转型时就 ClassCastException
+        include 'com/gfish/anticheat/bridge/**'
+    }
+}
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(25)
@@ -56,6 +90,15 @@ processResources {
     // 运行时首次启动释放到配置目录。三端因此共用同一份默认值，
     // 不会出现"同一个 max-speed 在 Fabric 和 Paper 上不一样"。
     from('../AntiCheat/src/main/resources/config.yml') {
+        into 'deepguard'
+    }
+    // 内置模型：首次启动释放到数据目录，开箱即用，与 Paper 版行为一致
+    from('../AntiCheat/src/main/resources/scaffold_detector.onnx') {
+        into 'deepguard'
+    }
+    // ONNX 桥接 jar：运行时会释放到磁盘再加进子类加载器
+    dependsOn 'bridgeJar'
+    from(layout.buildDirectory.dir('generated/onnx')) {
         into 'deepguard'
     }
 }
